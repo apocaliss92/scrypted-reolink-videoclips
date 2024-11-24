@@ -1,49 +1,7 @@
-import sdk, { HttpRequest, HttpRequestHandler, HttpResponse, MixinProvider, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, Settings, SettingValue, WritableDeviceState } from "@scrypted/sdk";
-import axios from "axios";
-import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
+import sdk, { DeviceBase, HttpRequest, HttpRequestHandler, HttpResponse, MixinProvider, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, SettingValue, WritableDeviceState } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-const { systemManager, mediaManager, endpointManager } = sdk;
-
-class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> implements Settings {
-    storageSettings = new StorageSettings(this, {
-        pluginEnabled: {
-            title: 'Download enabled',
-            type: 'boolean',
-            defaultValue: true,
-            immediate: true,
-        },
-    });
-
-    constructor(options: SettingsMixinDeviceOptions<any>) {
-        super(options);
-
-        const mainPluginDevice = systemManager.getDeviceByName('Reolink utilities') as unknown as Settings;
-    }
-
-    async getMixinSettings(): Promise<Setting[]> {
-        const settings: Setting[] = await this.storageSettings.getSettings();
-
-        // if (this.interfaces.includes(ScryptedInterface.VideoCamera)) {
-        //     const detectionClasses = this.storageSettings.getItem('detectionClasses') ?? [];
-        //     for (const detectionClass of detectionClasses) {
-        //         const key = `${detectionClass}:scoreThreshold`;
-        //         settings.push({
-        //             key,
-        //             title: `Score threshold for ${detectionClass}`,
-        //             subgroup: 'Detection',
-        //             type: 'number',
-        //             value: this.storageSettings.getItem(key as any)
-        //         });
-        //     }
-        // }
-
-        return settings;
-    }
-
-    async putMixinSetting(key: string, value: string) {
-        this.storage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
-    }
-}
+import { cleanup } from "./utils";
+import ReolinkUtilitiesMixin from "./cameraMixin";
 
 export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase implements MixinProvider, HttpRequestHandler {
     storageSettings = new StorageSettings(this, {
@@ -53,7 +11,22 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
             defaultValue: false,
             immediate: true,
         },
+        downloadFolder: {
+            title: 'Directory where to cache thumbnails and videoclips',
+            description: 'Default to the plugin folder',
+            type: 'string',
+        },
+        basicAuthToken: {
+            title: 'Basic authnetication token',
+            type: 'string',
+        },
+        clearDownloadedData: {
+            title: 'clear thumbnails and videoclips',
+            type: 'button',
+            onPut: async () => await cleanup(this.storageSettings.values.downloadFolder)
+        },
     });
+    public mixinsMap: Record<string, ReolinkUtilitiesMixin> = {};
 
     constructor(nativeId: string) {
         super(nativeId);
@@ -61,46 +34,35 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
 
     async onRequest(request: HttpRequest, response: HttpResponse): Promise<void> {
         const decodedUrl = decodeURIComponent(request.url);
-        const [_, __, ___, ____, _____, webhook, deviceName, spec] = decodedUrl.split('/');
-        const device = sdk.systemManager.getDeviceByName(deviceName) as unknown as (ScryptedDeviceBase & Settings);
-        const deviceSettings = await device?.getSettings();
+        const [_, __, ___, ____, _____, webhook, ...rest] = decodedUrl.split('/');
+        const [deviceId, ...videoclipPath] = rest;
+        const videoclipId = videoclipPath.join('/');
+        const dev = this.mixinsMap[deviceId];
         try {
-            if (deviceSettings) {
-                // if (webhook === 'snapshots') {
-                // const { lastSnapshot } = await getWebookSpecs();
-                // const isWebhookEnabled = deviceSettings.find(setting => setting.key === 'homeassistantMetadata:lastSnapshotWebhook')?.value as boolean;
-
-                // if (spec === lastSnapshot) {
-                //     if (isWebhookEnabled) {
-                //         // response.send(`${JSON.stringify(this.storageSettings.getItem('deviceLastSnapshotMap'))}`, {
-                //         //     code: 404,
-                //         // });
-                //         // return;
-                //         const { imageUrl } = this.storageSettings.getItem('deviceLastSnapshotMap')[deviceName] ?? {};
-
-                //         if (imageUrl) {
-                //             const mo = await sdk.mediaManager.createFFmpegMediaObject({
-                //                 inputArguments: [
-                //                     '-i', imageUrl,
-                //                 ]
-                //             });
-                //             const jpeg = await sdk.mediaManager.convertMediaObjectToBuffer(mo, 'image/jpeg');
-                //             response.send(jpeg, {
-                //                 headers: {
-                //                     'Content-Type': 'image/jpeg',
-                //                 }
-                //             });
-                //             return;
-                //         } else {
-                //             response.send(`Last snapshot not found for device ${deviceName} and spec ${spec}`, {
-                //                 code: 404,
-                //             });
-                //             return;
-                //         }
-                //     }
-                // }
-                // }
-            }
+            if (webhook === 'videoclip') {
+                const api = await dev.getClient();
+                const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, deviceId);
+                const basicAuthToken = this.storageSettings.values.basicAuthToken;
+                response.send('', {
+                    code: 302,
+                    headers: {
+                        'Set-Cookie': `token=${basicAuthToken}`,
+                        Location: playbackPathWithHost,
+                        Authentication: `Basic ${basicAuthToken}`
+                    }
+                });
+                return;
+            } else
+                if (webhook === 'thumbnail') {
+                    const thumbnailMo = await dev.getVideoClipThumbnail(videoclipId);
+                    const jpeg = await sdk.mediaManager.convertMediaObjectToBuffer(thumbnailMo, 'image/jpeg');
+                    response.send(jpeg, {
+                        headers: {
+                            'Content-Type': 'image/jpeg',
+                        }
+                    });
+                    return;
+                }
         } catch (e) {
             response.send(`${JSON.stringify(e)}, ${e.message}`, {
                 code: 400,
@@ -108,7 +70,6 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
 
             return;
         }
-
         response.send(`Webhook not found`, {
             code: 404,
         });
@@ -139,17 +100,20 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
             undefined;
     }
 
-    async getMixin(mixinDevice: any, mixinDeviceInterfaces: ScryptedInterface[], mixinDeviceState: WritableDeviceState): Promise<any> {
-        return new ReolinkUtilitiesMixin({
-            mixinDevice,
-            mixinDeviceInterfaces,
-            mixinDeviceState,
-            mixinProviderNativeId: this.nativeId,
-            group: 'Reolink utilities',
-            groupKey: 'reolinkUtilities',
-        });
+    async getMixin(mixinDevice: DeviceBase, mixinDeviceInterfaces: ScryptedInterface[], mixinDeviceState: WritableDeviceState): Promise<any> {
+        return new ReolinkUtilitiesMixin(
+            {
+                mixinDevice,
+                mixinDeviceInterfaces,
+                mixinDeviceState,
+                mixinProviderNativeId: this.nativeId,
+                group: 'Reolink utilities',
+                groupKey: 'reolinkUtilities',
+            },
+            this);
     }
 
     async releaseMixin(id: string, mixinDevice: any): Promise<void> {
+        await mixinDevice.release();
     }
 }
