@@ -25,53 +25,16 @@ export type VideoSearchType = 'sub' | 'main';
 
 export class ReolinkCameraClient {
     token: string;
-    tokenLease: number;
 
     constructor(public host: string, public username: string, public password: string, public channelId: number, public console: Console, public readonly forceToken?: boolean) { }
 
-    async getToken(host: string, username: string, password: string) {
-        try {
-            const url = new URL(`http://${host}/api.cgi`);
-            const params = url.searchParams;
-            params.set('cmd', 'Login');
-
-            const response = await axios.post(url.href, [
-                {
-                    cmd: 'Login',
-                    action: 0,
-                    param: {
-                        User: {
-                            userName: username,
-                            password: password
-                        }
-                    }
-                },
-            ], { responseType: 'json' });
-
-            const token = response.data?.[0]?.value?.Token?.name || response.data?.value?.Token?.name;
-
-            if (!token)
-                throw new Error('unable to login');
-
-            const { data } = response;
-            const leaseTimeSeconds: number = data?.[0]?.value?.Token.leaseTime || data?.value?.Token.leaseTime;
-
-            return {
-                token,
-                leaseTimeSeconds,
-            }
-        }
-        catch (e) {
-            this.console.log('Error during login', e);
-        }
-    }
-
-
     private async request(options: AxiosRequestConfig, withToken?: boolean) {
-        await this.login();
         const url = new URL(options.url);
         const params = url.searchParams;
         if (withToken) {
+            if (!this.token) {
+                throw new Error('Token not set yet');
+            }
             params.set('token', this.token)
         } else {
             params.set('username', this.username)
@@ -88,18 +51,6 @@ export class ReolinkCameraClient {
         )
 
         return response;
-    }
-
-    async login() {
-        if (this.tokenLease && this.token && this.tokenLease > Date.now()) {
-            return;
-        }
-
-        this.console.log(`token ${this.token} expired at ${this.tokenLease}, renewing...`);
-
-        const { token, leaseTimeSeconds } = await this.getToken(this.host, this.username, this.password);
-        this.token = token
-        this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
     }
 
     async getVideoClips(options?: VideoClipOptions, streamType: VideoSearchType = 'main') {
@@ -163,8 +114,6 @@ export class ReolinkCameraClient {
     }
 
     async getVideoClipUrl(videoclipPath: string, deviceId: string) {
-        await this.login();
-
         const fileNameWithExtension = videoclipPath.split('/').pop();
         const fileName = fileNameWithExtension.split('.').shift();
         const downloadPath = `api.cgi?cmd=Download&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.token}`;

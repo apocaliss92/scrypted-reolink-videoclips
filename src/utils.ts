@@ -13,16 +13,11 @@ export const getFolderPaths = (deviceId: string, overridePath?: string) => {
     }
 
     const thumbnailFolder = path.join(basePath, 'thumbnails', deviceId);
-    const videoclipsFolder = path.join(basePath, 'videoclips', deviceId);
 
     if (!fs.existsSync(thumbnailFolder)) {
         fs.mkdirSync(thumbnailFolder, { recursive: true });
     }
-    if (!fs.existsSync(videoclipsFolder)) {
-        fs.mkdirSync(videoclipsFolder, { recursive: true });
-    }
-
-    return { thumbnailFolder, videoclipsFolder };
+    return { thumbnailFolder };
 }
 
 export const cleanup = (overridePath?: string) => {
@@ -33,13 +28,9 @@ export const cleanup = (overridePath?: string) => {
     }
 
     const thumbnailFolder = path.join(basePath, 'thumbnails');
-    const videoclipsFolder = path.join(basePath, 'videoclips');
 
     if (fs.existsSync(thumbnailFolder)) {
         fs.rmSync(thumbnailFolder, { recursive: true, force: true });
-    }
-    if (fs.existsSync(videoclipsFolder)) {
-        fs.rmSync(videoclipsFolder, { recursive: true, force: true });
     }
 }
 

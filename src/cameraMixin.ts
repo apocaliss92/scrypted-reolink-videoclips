@@ -27,6 +27,19 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
 
         this.plugin.mixinsMap[this.id] = this
         this.initNewClipsListener().then().catch(this.console.log);
+
+        setInterval(async () => {
+            await this.fetchToken();
+        }, 20000);
+        this.fetchToken().catch(this.console.log);
+    }
+
+    async fetchToken() {
+        const { apiToken } = await this.getDeviceProperties();
+        if (apiToken) {
+            const client = await this.getClient();
+            client.token = apiToken;
+        }
     }
 
     async initNewClipsListener() {
@@ -71,8 +84,9 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
         const password = deviceSettingsMap['password']?.value;
         const host = deviceSettingsMap['ip']?.value;
         const channel = deviceSettingsMap['rtspChannel']?.value;
+        const apiToken = deviceSettingsMap['apiToken']?.value;
 
-        return { username, password, host, channel }
+        return { username, password, host, channel, apiToken }
     }
 
     async getClient() {
@@ -96,9 +110,13 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
 
     async getVideoclipWebhookUrls(videoclipPath: string) {
         const cloudEndpoint = await endpointManager.getPublicCloudEndpoint();
+        const [endpoint, parameters] = cloudEndpoint.split('?');
 
-        const videoclipUrl = `${cloudEndpoint}videoclip/${this.id}/${videoclipPath}`;
-        const thumbnailUrl = `${cloudEndpoint}thumbnail/${this.id}/${videoclipPath}`;
+        // const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}`;
+        // const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}`;
+        const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters}`;
+        const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters}`;
+        this.console.log({ videoclipUrl, cloudEndpoint, endpoint, parameters })
 
         return { videoclipUrl, thumbnailUrl };
     }
@@ -181,10 +199,10 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
         const api = await this.getClient();
         const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, this.id);
 
-        const { videoclipsFolder, thumbnailFolder } = getFolderPaths(this.id, this.plugin.storageSettings.values.downloadFolder);
+        const { thumbnailFolder } = getFolderPaths(this.id, this.plugin.storageSettings.values.downloadFolder);
         const filename = `${videoclipId.split('/').pop().split('.')[0]}`;
 
-        return { videoclipUrl: playbackPathWithHost, filename, videoclipsFolder, thumbnailFolder }
+        return { videoclipUrl: playbackPathWithHost, filename, thumbnailFolder }
     }
 
     async getVideoClip(videoId: string): Promise<MediaObject> {

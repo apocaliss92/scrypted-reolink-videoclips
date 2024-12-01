@@ -21,7 +21,7 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
             type: 'string',
         },
         clearDownloadedData: {
-            title: 'clear thumbnails and videoclips',
+            title: 'clear stored data',
             type: 'button',
             onPut: async () => await cleanup(this.storageSettings.values.downloadFolder)
         },
@@ -33,22 +33,33 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
     }
 
     async onRequest(request: HttpRequest, response: HttpResponse): Promise<void> {
-        const decodedUrl = decodeURIComponent(request.url);
+        const decodedUrlWithParams = decodeURIComponent(request.url);
+        const [decodedUrl] = decodedUrlWithParams.split('?');
         const [_, __, ___, ____, _____, webhook, ...rest] = decodedUrl.split('/');
         const [deviceId, ...videoclipPath] = rest;
         const videoclipId = videoclipPath.join('/');
         const dev = this.mixinsMap[deviceId];
+
         try {
             if (webhook === 'videoclip') {
                 const api = await dev.getClient();
                 const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, deviceId);
-                const basicAuthToken = this.storageSettings.values.basicAuthToken;
+                // const stream = await axios.get(playbackPathWithHost, {responseType: 'stream'})
+                
+                // response.sendStream(stre, {
+                //     code: 302,
+                //     headers: {
+                //         'Set-Cookie': `token=${basicAuthToken}`,
+                //         Location: playbackPathWithHost,
+                //         Authentication: `Basic ${basicAuthToken}`
+                //     }
+                // });
                 response.send('', {
                     code: 302,
                     headers: {
-                        'Set-Cookie': `token=${basicAuthToken}`,
+                        // 'Set-Cookie': `token=${basicAuthToken}`,
+                        // Authentication: `Basic ${basicAuthToken}`
                         Location: playbackPathWithHost,
-                        Authentication: `Basic ${basicAuthToken}`
                     }
                 });
                 return;
@@ -70,7 +81,7 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
 
             return;
         }
-        response.send(`Webhook not found`, {
+        response.send(`Webhook not found: ${decodedUrl}`, {
             code: 404,
         });
 
