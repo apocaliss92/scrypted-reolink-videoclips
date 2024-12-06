@@ -12,6 +12,7 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
     client: ReolinkCameraClient;
     killed: boolean;
     newClipsListener: NodeJS.Timeout;
+    fetchTokenInterval: NodeJS.Timeout;
     generating: boolean;
 
     storageSettings = new StorageSettings(this, {
@@ -26,10 +27,14 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
         super(options);
 
         this.plugin.mixinsMap[this.id] = this
-        this.initNewClipsListener().then().catch(this.console.log);
+        // this.initNewClipsListener().then().catch(this.console.log);
 
-        setInterval(async () => {
-            await this.fetchToken();
+        this.fetchTokenInterval = setInterval(async () => {
+            try {
+                await this.fetchToken();
+            } catch (e) {
+                this.console.log('Error in fetchToken interval', e);
+            }
         }, 20000);
         this.fetchToken().catch(this.console.log);
     }
@@ -48,7 +53,7 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
                 this.generating = true;
                 const api = await this.getClient();
 
-                const startTime = new Date().getTime() - 3600000;
+                const startTime = new Date().getTime() - 1000 * 60 * 60 * 24;
                 const endTime = new Date().getTime();
 
                 const dateRanges = splitDateRangeByDay(startTime, endTime);
@@ -74,6 +79,7 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
 
     async release() {
         this.killed = true;
+        this.fetchTokenInterval && clearInterval(this.fetchTokenInterval);
     }
 
     async getDeviceProperties() {
@@ -151,7 +157,7 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
                 }
 
                 const videoclips: VideoClip[] = [];
-                this.console.log(`Videoclips found:`, allSearchedElements, options);
+                this.console.log(`Videoclips found:`, allSearchedElements, dateRanges);
 
                 for (const searchElement of allSearchedElements) {
                     try {

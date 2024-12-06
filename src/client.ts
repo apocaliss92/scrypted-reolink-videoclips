@@ -100,11 +100,17 @@ export class ReolinkCameraClient {
         ];
 
         try {
-            const response = await this.request({
+            const opts = {
                 url: url.href,
                 method: 'POST',
                 data: body
-            }, true);
+            };
+            const response = await this.request(opts, true);
+
+            if (response.data?.[0]?.error) {
+                this.console.log('Error fetching videoclips', response.data?.[0]?.error, JSON.stringify(opts));
+                return [];
+            }
 
             return (response.data?.[0]?.value?.SearchResult?.File ?? []) as VideoSearchResult[];
         } catch (e) {
@@ -123,8 +129,10 @@ export class ReolinkCameraClient {
         return {
             downloadPath,
             playbackPath,
-            downloadPathWithHost: `https://recordings.gianlucaruocco.top/${deviceId}/${downloadPath}`,
-            playbackPathWithHost: `https://recordings.gianlucaruocco.top/${deviceId}/${playbackPath}`,
+            downloadPathWithHost: `http://${this.host}/${downloadPath}`,
+            playbackPathWithHost: `http://${this.host}/${playbackPath}`,
+            downloadPathWithHost2: `https://recordings.gianlucaruocco.top/${deviceId}/${downloadPath}`,
+            playbackPathWithHost2: `https://recordings.gianlucaruocco.top/${deviceId}/${playbackPath}`,
             fileName,
             fileNameWithExtension,
         };

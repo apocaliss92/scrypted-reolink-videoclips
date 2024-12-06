@@ -43,26 +43,30 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
         try {
             if (webhook === 'videoclip') {
                 const api = await dev.getClient();
-                const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, deviceId);
-                // const stream = await axios.get(playbackPathWithHost, {responseType: 'stream'})
-                
-                // response.sendStream(stre, {
-                //     code: 302,
-                //     headers: {
-                //         'Set-Cookie': `token=${basicAuthToken}`,
-                //         Location: playbackPathWithHost,
-                //         Authentication: `Basic ${basicAuthToken}`
-                //     }
-                // });
+                const { playbackPathWithHost2 } = await api.getVideoClipUrl(videoclipId, deviceId);
+                this.console.log(`Videoclip url is ${playbackPathWithHost2} for device ${deviceId}`);
+
                 response.send('', {
                     code: 302,
                     headers: {
                         // 'Set-Cookie': `token=${basicAuthToken}`,
                         // Authentication: `Basic ${basicAuthToken}`
-                        Location: playbackPathWithHost,
+                        Location: playbackPathWithHost2,
                     }
                 });
                 return;
+
+                // const stream = await axios.get(playbackPathWithHost, { responseType: 'stream' });
+                // response.sendStream(stream.data, {
+                //     code: 200
+                // });
+                // response.sendStream((async function* () {
+                //     const stream = await axios.get(playbackPathWithHost, { responseType: 'stream' });
+                //     yield stream.data;
+                // })(), {
+                //     code: 200
+                // });
+                // return;
             } else
                 if (webhook === 'thumbnail') {
                     const thumbnailMo = await dev.getVideoClipThumbnail(videoclipId);
