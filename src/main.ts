@@ -1,23 +1,14 @@
 import sdk, { DeviceBase, HttpRequest, HttpRequestHandler, HttpResponse, MixinProvider, ScryptedDeviceBase, ScryptedDeviceType, ScryptedInterface, Setting, SettingValue, WritableDeviceState } from "@scrypted/sdk";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { cleanup } from "./utils";
-import ReolinkUtilitiesMixin from "./cameraMixin";
+import ReolinkVideoclipssMixin from "./cameraMixin";
+import http from 'http';
 
-export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase implements MixinProvider, HttpRequestHandler {
+export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase implements MixinProvider, HttpRequestHandler {
     storageSettings = new StorageSettings(this, {
-        debug: {
-            title: 'Log debug messages',
-            type: 'boolean',
-            defaultValue: false,
-            immediate: true,
-        },
         downloadFolder: {
             title: 'Directory where to cache thumbnails and videoclips',
             description: 'Default to the plugin folder',
-            type: 'string',
-        },
-        basicAuthToken: {
-            title: 'Basic authnetication token',
             type: 'string',
         },
         clearDownloadedData: {
@@ -26,7 +17,7 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
             onPut: async () => await cleanup(this.storageSettings.values.downloadFolder)
         },
     });
-    public mixinsMap: Record<string, ReolinkUtilitiesMixin> = {};
+    public mixinsMap: Record<string, ReolinkVideoclipssMixin> = {};
 
     constructor(nativeId: string) {
         super(nativeId);
@@ -43,30 +34,46 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
         try {
             if (webhook === 'videoclip') {
                 const api = await dev.getClient();
-                const { playbackPathWithHost2 } = await api.getVideoClipUrl(videoclipId, deviceId);
-                this.console.log(`Videoclip url is ${playbackPathWithHost2} for device ${deviceId}`);
 
-                response.send('', {
-                    code: 302,
-                    headers: {
-                        // 'Set-Cookie': `token=${basicAuthToken}`,
-                        // Authentication: `Basic ${basicAuthToken}`
-                        Location: playbackPathWithHost2,
-                    }
-                });
-                return;
+                const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, deviceId);
 
-                // const stream = await axios.get(playbackPathWithHost, { responseType: 'stream' });
-                // response.sendStream(stream.data, {
-                //     code: 200
-                // });
-                // response.sendStream((async function* () {
-                //     const stream = await axios.get(playbackPathWithHost, { responseType: 'stream' });
-                //     yield stream.data;
-                // })(), {
-                //     code: 200
-                // });
-                // return;
+                const sendVideo = async () => {
+                    return new Promise<void>((resolve, reject) => {
+                        // const headers = {
+                        //     range: request.headers.range,
+                        // }
+                        http.get(playbackPathWithHost, { headers: request.headers }, (httpResponse) => {
+                            if (httpResponse.statusCode[0] === 400) {
+                                reject(new Error(`Error loading the video: ${httpResponse.statusCode} - ${httpResponse.statusMessage}. Headers: ${JSON.stringify(request.headers)}`));
+                                return;
+                            }
+
+                            try {
+                                response.sendStream((async function* () {
+                                    for await (const chunk of httpResponse) {
+                                        yield chunk;
+                                    }
+                                })(), {
+                                    headers: httpResponse.headers
+                                });
+
+                                resolve();
+                            } catch (err) {
+                                reject(err);
+                            }
+                        }).on('error', (e) => {
+                            this.console.log('Error fetching videoclip', e);
+                            reject(e)
+                        });
+                    });
+                }
+
+                try {
+                    await sendVideo();
+                    return;
+                } catch (e) {
+                    this.console.log('Error fetching videoclip', e);
+                }
             } else
                 if (webhook === 'thumbnail') {
                     const thumbnailMo = await dev.getVideoClipThumbnail(videoclipId);
@@ -116,14 +123,14 @@ export default class ReolinkUtilitiesProvider extends ScryptedDeviceBase impleme
     }
 
     async getMixin(mixinDevice: DeviceBase, mixinDeviceInterfaces: ScryptedInterface[], mixinDeviceState: WritableDeviceState): Promise<any> {
-        return new ReolinkUtilitiesMixin(
+        return new ReolinkVideoclipssMixin(
             {
                 mixinDevice,
                 mixinDeviceInterfaces,
                 mixinDeviceState,
                 mixinProviderNativeId: this.nativeId,
-                group: 'Reolink utilities',
-                groupKey: 'reolinkUtilities',
+                group: 'Reolink videoclips',
+                groupKey: 'reolinkVideoclips',
             },
             this);
     }

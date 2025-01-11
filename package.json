@@ -1,11 +1,11 @@
 {
-   "name": "@apocaliss92/scrypted-reolink-utilities",
-   "description": "Scrypted plug in to add capabilities to Reolink cameras",
+   "name": "@apocaliss92/scrypted-reolink-videoclips",
+   "description": "Scrypted plugin to let reolink cameras to show stored videoclips",
    "repository": {
       "type": "git",
       "url": "https://github.com/apocaliss92/scrypted-reolink-utilities"
    },
-   "version": "0.0.1",
+   "version": "0.0.2",
    "scripts": {
       "scrypted-setup-project": "scrypted-setup-project",
       "prescrypted-setup-project": "scrypted-package-json",
@@ -23,13 +23,11 @@
       "scrypted",
       "plugin",
       "reolink",
-      "utilities",
       "videoclips",
-      "snapshots",
-      "battery"
+      "snapshots"
    ],
    "scrypted": {
-      "name": "Reolink utilities",
+      "name": "Reolink videoclips",
       "type": "API",
       "interfaces": [
          "Settings",
@@ -40,9 +38,8 @@
    },
    "dependencies": {
       "@scrypted/sdk": "^0.3.65",
-      "axios": "^1.7.7",
-      "lodash": "^4.17.21",
-      "mqtt": "^4.2.8"
+      "@scrypted/common": "file:../scrypted/common",
+      "lodash": "^4.17.21"
    },
    "devDependencies": {
       "@types/lodash": "^4.17.12",

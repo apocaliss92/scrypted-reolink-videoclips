@@ -1,5 +1,8 @@
 import { VideoClipOptions } from '@scrypted/sdk';
-import axios, { AxiosRequestConfig } from 'axios';
+import { AuthFetchCredentialState, authHttpFetch } from '@scrypted/common/src/http-auth-fetch';
+import { PassThrough, Readable } from 'stream';
+import { HttpFetchOptions } from '../../scrypted/server/src/fetch/http-fetch';
+import { getLoginParameters } from '../../scrypted/plugins/reolink/src/probe';
 
 export interface VideoSearchTime {
     day: number;
@@ -24,33 +27,54 @@ export interface VideoSearchResult {
 export type VideoSearchType = 'sub' | 'main';
 
 export class ReolinkCameraClient {
-    token: string;
+    credential: AuthFetchCredentialState;
+    parameters: Record<string, string>;
+    tokenLease: number;
 
-    constructor(public host: string, public username: string, public password: string, public channelId: number, public console: Console, public readonly forceToken?: boolean) { }
+    constructor(public host: string, public username: string, public password: string, public channelId: number, public console: Console, public readonly forceToken?: boolean) {
+        this.credential = {
+            username,
+            password,
+        };
+    }
 
-    private async request(options: AxiosRequestConfig, withToken?: boolean) {
-        const url = new URL(options.url);
-        const params = url.searchParams;
-        if (withToken) {
-            if (!this.token) {
-                throw new Error('Token not set yet');
-            }
-            params.set('token', this.token)
-        } else {
-            params.set('username', this.username)
-            params.set('password', this.password)
+    private async request(options: HttpFetchOptions<Readable>, body?: Readable) {
+        const response = await authHttpFetch({
+            ...options,
+            rejectUnauthorized: false,
+            credential: this.credential,
+            body,
+        });
+        return response;
+    }
+
+    private createReadable = (data: any) => {
+        const pt = new PassThrough();
+        pt.write(Buffer.from(JSON.stringify(data)));
+        pt.end();
+        return pt;
+    }
+
+    async login() {
+        if (this.tokenLease > Date.now()) {
+            return;
         }
 
-        options.url = url.href;
-        const response = axios.request(
-            {
-                method: 'GET',
-                responseType: 'json',
-                ...options
-            }
-        )
+        this.console.log(`token expired at ${this.tokenLease}, renewing...`);
 
-        return response;
+        const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
+        this.parameters = parameters
+        this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
+    }
+
+    async requestWithLogin(options: HttpFetchOptions<Readable>, body?: Readable) {
+        await this.login();
+        const url = options.url as URL;
+        const params = url.searchParams;
+        for (const [k, v] of Object.entries(this.parameters)) {
+            params.set(k, v);
+        }
+        return this.request(options, body);
     }
 
     async getVideoClips(options?: VideoClipOptions, streamType: VideoSearchType = 'main') {
@@ -100,19 +124,19 @@ export class ReolinkCameraClient {
         ];
 
         try {
-            const opts = {
-                url: url.href,
+            const response = await this.requestWithLogin({
+                url,
+                responseType: 'json',
                 method: 'POST',
-                data: body
-            };
-            const response = await this.request(opts, true);
+            }, this.createReadable(body));
 
-            if (response.data?.[0]?.error) {
-                this.console.log('Error fetching videoclips', response.data?.[0]?.error, JSON.stringify(opts));
+            const error = response.body?.[0]?.error;
+            if (error) {
+                this.console.log('Error fetching videoclips', error, JSON.stringify({ body, url }));
                 return [];
             }
 
-            return (response.data?.[0]?.value?.SearchResult?.File ?? []) as VideoSearchResult[];
+            return (response.body?.[0]?.value?.SearchResult?.File ?? []) as VideoSearchResult[];
         } catch (e) {
             this.console.log('Error fetching videoclips', e);
             return [];
@@ -122,94 +146,16 @@ export class ReolinkCameraClient {
     async getVideoClipUrl(videoclipPath: string, deviceId: string) {
         const fileNameWithExtension = videoclipPath.split('/').pop();
         const fileName = fileNameWithExtension.split('.').shift();
-        const downloadPath = `api.cgi?cmd=Download&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.token}`;
-        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.token}`;
+        const downloadPath = `api.cgi?cmd=Download&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
+        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
 
-        // const auth = 'Basic c2NyeXB0ZWQ6QmZZYkhZN2ViVG1xRmFNbVdrTG16SkRpalZuMU5PQzFUMDBNb0lJOUtDY2ZJVktwS3lCZnhwTXV1blFR';
         return {
             downloadPath,
             playbackPath,
             downloadPathWithHost: `http://${this.host}/${downloadPath}`,
             playbackPathWithHost: `http://${this.host}/${playbackPath}`,
-            downloadPathWithHost2: `https://recordings.gianlucaruocco.top/${deviceId}/${downloadPath}`,
-            playbackPathWithHost2: `https://recordings.gianlucaruocco.top/${deviceId}/${playbackPath}`,
             fileName,
             fileNameWithExtension,
         };
-    }
-
-    async getBatteryInfo() {
-        const url = new URL(`http://${this.host}/api.cgi`);
-
-        const body = [
-            {
-                cmd: "GetBatteryInfo",
-                action: 0,
-                param: { channel: this.channelId }
-            },
-            {
-                cmd: "GetChannelstatus",
-            }
-        ];
-
-        const response = await this.request({
-            url: url.href,
-            method: 'POST',
-            data: body
-        }, true);
-
-        const error = response.data?.find(elem => elem.error)?.error;
-        if (error) {
-            this.console.error('error during call to getBatteryInfo', error);
-        }
-
-        const batteryInfoEntry = response.data.find(entry => entry.cmd === 'GetBatteryInfo')?.value?.Battery;
-        const channelStatusEntry = response.data.find(entry => entry.cmd === 'GetChannelstatus')?.value?.status
-            ?.find(chStatus => chStatus.channel === this.channelId);
-
-        const isOnline = channelStatusEntry?.online === 1;
-        const isSleeping = isOnline ? channelStatusEntry?.sleep === 1 : true;
-
-        return {
-            batteryPercent: batteryInfoEntry?.batteryPercent,
-            sleep: isSleeping,
-        }
-    }
-
-    async getWhiteLed() {
-        const url = new URL(`http://${this.host}/api.cgi`);
-
-        const body = [
-            {
-                cmd: "GetWhiteLed",
-                action: 0,
-                param: { channel: this.channelId }
-            }
-        ];
-
-        const response = await this.request({
-            url: url.href,
-            method: 'POST',
-            data: body
-        }, true);
-
-        return response.data;
-    }
-
-    async jpegSnapshot(timeout = 10000) {
-        const url = new URL(`http://${this.host}/cgi-bin/api.cgi`);
-        const params = url.searchParams;
-        params.set('cmd', 'Snap');
-        params.set('channel', this.channelId.toString());
-        params.set('rs', Date.now().toString());
-
-        const response = await this.request({
-            url: url.href,
-            method: 'GET',
-            timeout,
-            responseType: 'arraybuffer'
-        }, true);
-
-        return response.data;
     }
 }

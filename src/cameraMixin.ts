@@ -1,33 +1,33 @@
 import sdk, { VideoClips, VideoClipOptions, VideoClip, MediaObject, VideoClipThumbnailOptions, Setting, Settings } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
-import { keyBy } from "lodash";
+import keyBy from "lodash/keyBy";
 import { ReolinkCameraClient, VideoSearchType, VideoSearchTime, VideoSearchResult } from "./client";
-import ReolinkUtilitiesProvider from "./main";
+import ReolinkVideoclipssProvider from "./main";
 import { getThumbnailMediaObject, getFolderPaths, parseVideoclipName, splitDateRangeByDay } from "./utils";
 
 const { endpointManager } = sdk;
 
-export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> implements Settings, VideoClips {
+export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any> implements Settings, VideoClips {
     client: ReolinkCameraClient;
     killed: boolean;
-    newClipsListener: NodeJS.Timeout;
     fetchTokenInterval: NodeJS.Timeout;
-    generating: boolean;
 
     storageSettings = new StorageSettings(this, {
-        downloadVideoclips: {
-            title: 'Download videoclips',
-            type: 'boolean',
-            immediate: true,
+        username: {
+            title: 'Username',
+            type: 'string',
+        },
+        password: {
+            title: 'Password',
+            type: 'password',
         },
     });
 
-    constructor(options: SettingsMixinDeviceOptions<any>, private plugin: ReolinkUtilitiesProvider) {
+    constructor(options: SettingsMixinDeviceOptions<any>, private plugin: ReolinkVideoclipssProvider) {
         super(options);
 
         this.plugin.mixinsMap[this.id] = this
-        // this.initNewClipsListener().then().catch(this.console.log);
 
         this.fetchTokenInterval = setInterval(async () => {
             try {
@@ -40,41 +40,8 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
     }
 
     async fetchToken() {
-        const { apiToken } = await this.getDeviceProperties();
-        if (apiToken) {
-            const client = await this.getClient();
-            client.token = apiToken;
-        }
-    }
-
-    async initNewClipsListener() {
-        this.newClipsListener = setInterval(async () => {
-            if (!this.generating) {
-                this.generating = true;
-                const api = await this.getClient();
-
-                const startTime = new Date().getTime() - 1000 * 60 * 60 * 24;
-                const endTime = new Date().getTime();
-
-                const dateRanges = splitDateRangeByDay(startTime, endTime);
-
-                let allSearchedElements: VideoSearchResult[] = [];
-
-                for (const dateRange of dateRanges) {
-                    const response = await api.getVideoClips({ startTime: dateRange.start, endTime: dateRange.end });
-                    allSearchedElements.push(...response);
-                }
-
-                this.console.log(`Generating ${allSearchedElements.length} thumbnails`);
-
-                for (const searchElement of allSearchedElements) {
-                    const videoclipPath = searchElement.name;
-                    await this.getVideoClipThumbnail(videoclipPath);
-                }
-
-                this.generating = false;
-            }
-        }, 30000);
+        const client = await this.getClient();
+        await client.login();
     }
 
     async release() {
@@ -90,20 +57,21 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
         const password = deviceSettingsMap['password']?.value;
         const host = deviceSettingsMap['ip']?.value;
         const channel = deviceSettingsMap['rtspChannel']?.value;
-        const apiToken = deviceSettingsMap['apiToken']?.value;
 
-        return { username, password, host, channel, apiToken }
+        return { username, password, host, channel }
     }
 
     async getClient() {
         if (!this.client) {
-            const { channel, host, password, username } = await this.getDeviceProperties();
+            const { channel, host, username: usernameParent, password: passwordParent } = await this.getDeviceProperties();
+            const { username, password } = this.storageSettings.values;
             this.client = new ReolinkCameraClient(
                 host,
-                username,
-                password,
+                username || usernameParent,
+                password || passwordParent,
                 channel,
                 this.console,
+                true,
             );
         }
 
@@ -118,10 +86,8 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
         const cloudEndpoint = await endpointManager.getPublicCloudEndpoint();
         const [endpoint, parameters] = cloudEndpoint.split('?');
 
-        // const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}`;
-        // const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}`;
-        const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters}`;
-        const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters}`;
+        const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters ?? ''}`;
+        const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters ?? ''}`;
         this.console.log({ videoclipUrl, cloudEndpoint, endpoint, parameters })
 
         return { videoclipUrl, thumbnailUrl };
@@ -141,63 +107,58 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
     }
 
     async getVideoClips(options?: VideoClipOptions, streamType: VideoSearchType = 'main') {
-        const { downloadVideoclips } = this.storageSettings.values;
+        try {
+            const api = await this.getClient();
 
-        if (downloadVideoclips) {
-            try {
-                const api = await this.getClient();
+            const dateRanges = splitDateRangeByDay(options.startTime, options.endTime);
 
-                const dateRanges = splitDateRangeByDay(options.startTime, options.endTime);
+            let allSearchedElements: VideoSearchResult[] = [];
 
-                let allSearchedElements: VideoSearchResult[] = [];
-
-                for (const dateRange of dateRanges) {
-                    const response = await api.getVideoClips({ startTime: dateRange.start, endTime: dateRange.end });
-                    allSearchedElements.push(...response);
-                }
-
-                const videoclips: VideoClip[] = [];
-                this.console.log(`Videoclips found:`, allSearchedElements, dateRanges);
-
-                for (const searchElement of allSearchedElements) {
-                    try {
-                        const startTime = this.processDate(searchElement.StartTime);
-                        const entdTime = this.processDate(searchElement.EndTime);
-
-                        const durationInMs = entdTime - startTime;
-                        const videoclipPath = searchElement.name;
-                        const { detectionClasses } = parseVideoclipName(videoclipPath)
-
-                        const event = 'motion';
-                        const { thumbnailUrl, videoclipUrl } = await this.getVideoclipWebhookUrls(videoclipPath);
-                        videoclips.push({
-                            id: videoclipPath,
-                            startTime,
-                            duration: Math.round(durationInMs),
-                            videoId: videoclipPath,
-                            thumbnailId: videoclipPath,
-                            detectionClasses,
-                            event,
-                            description: event,
-                            resources: {
-                                thumbnail: {
-                                    href: thumbnailUrl
-                                },
-                                video: {
-                                    href: videoclipUrl
-                                    // href: playbackPathWithHost
-                                }
-                            }
-                        })
-                    } catch (e) {
-                        this.console.log('error generating clip', e)
-                    }
-                }
-
-                return videoclips;
-            } catch (e) {
-                this.console.log('Error during get videoClips', e);
+            for (const dateRange of dateRanges) {
+                const response = await api.getVideoClips({ startTime: dateRange.start, endTime: dateRange.end });
+                allSearchedElements.push(...response);
             }
+
+            const videoclips: VideoClip[] = [];
+            this.console.log(`Videoclips found:`, allSearchedElements, dateRanges);
+
+            for (const searchElement of allSearchedElements) {
+                try {
+                    const startTime = this.processDate(searchElement.StartTime);
+                    const entdTime = this.processDate(searchElement.EndTime);
+
+                    const durationInMs = entdTime - startTime;
+                    const videoclipPath = searchElement.name;
+                    const { detectionClasses } = parseVideoclipName(videoclipPath)
+
+                    const event = 'motion';
+                    const { thumbnailUrl, videoclipUrl } = await this.getVideoclipWebhookUrls(videoclipPath);
+                    videoclips.push({
+                        id: videoclipPath,
+                        startTime,
+                        duration: Math.round(durationInMs),
+                        videoId: videoclipPath,
+                        thumbnailId: videoclipPath,
+                        detectionClasses,
+                        event,
+                        description: event,
+                        resources: {
+                            thumbnail: {
+                                href: thumbnailUrl
+                            },
+                            video: {
+                                href: videoclipUrl
+                            }
+                        }
+                    })
+                } catch (e) {
+                    this.console.log('error generating clip', e)
+                }
+            }
+
+            return videoclips;
+        } catch (e) {
+            this.console.log('Error during get videoClips', e);
         }
     }
 
@@ -212,16 +173,15 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
     }
 
     async getVideoClip(videoId: string): Promise<MediaObject> {
-        // this.console.log('Fetching videoId ', videoId)
-        const api = await this.getClient();
-        const { playbackPathWithHost } = await api.getVideoClipUrl(videoId, this.id);
-        const videoclipMo = await sdk.mediaManager.createMediaObject(playbackPathWithHost, 'video/mp4');
+        this.console.log('Fetching videoId ', videoId);
+        const { videoclipUrl } = await this.getVideoclipWebhookUrls(videoId);
+        const videoclipMo = await sdk.mediaManager.createMediaObject(videoclipUrl, 'video/mp4');
 
         return videoclipMo;
     }
 
     async getVideoClipThumbnail(thumbnailId: string, options?: VideoClipThumbnailOptions): Promise<MediaObject> {
-        // this.console.log('Fetching thumbnailId ', thumbnailId);
+        this.console.log('Fetching thumbnailId ', thumbnailId);
         const { filename, videoclipUrl, thumbnailFolder } = await this.getVideoclipParams(thumbnailId);
 
         const { thumbnailMo } = await getThumbnailMediaObject({
@@ -240,7 +200,8 @@ export default class ReolinkUtilitiesMixin extends SettingsMixinDeviceBase<any> 
     }
 
     async getMixinSettings(): Promise<Setting[]> {
-        const settings: Setting[] = await this.storageSettings.getSettings();
+        const settings = await this.storageSettings.getSettings();
+
 
         return settings;
     }
