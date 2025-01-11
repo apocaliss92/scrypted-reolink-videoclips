@@ -31,17 +31,27 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
         const videoclipId = videoclipPath.join('/');
         const dev = this.mixinsMap[deviceId];
 
+        this.console.log(`Resource requested: ${JSON.stringify({
+            decodedUrlWithParams,
+            decodedUrl,
+            webhook,
+            deviceId,
+            videoclipPath,
+        })}`);
+
         try {
             if (webhook === 'videoclip') {
                 const api = await dev.getClient();
 
                 const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, deviceId);
+                this.console.log(`Videoclip requested: ${JSON.stringify({
+                    videoclipId,
+                    deviceId,
+                    playbackPathWithHost,
+                })}`);
 
                 const sendVideo = async () => {
                     return new Promise<void>((resolve, reject) => {
-                        // const headers = {
-                        //     range: request.headers.range,
-                        // }
                         http.get(playbackPathWithHost, { headers: request.headers }, (httpResponse) => {
                             if (httpResponse.statusCode[0] === 400) {
                                 reject(new Error(`Error loading the video: ${httpResponse.statusCode} - ${httpResponse.statusMessage}. Headers: ${JSON.stringify(request.headers)}`));
@@ -76,6 +86,10 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                 }
             } else
                 if (webhook === 'thumbnail') {
+                    this.console.log(`Thumbnail requested: ${JSON.stringify({
+                        videoclipId,
+                        deviceId,
+                    })}`);
                     const thumbnailMo = await dev.getVideoClipThumbnail(videoclipId);
                     const jpeg = await sdk.mediaManager.convertMediaObjectToBuffer(thumbnailMo, 'image/jpeg');
                     response.send(jpeg, {
