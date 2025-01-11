@@ -88,7 +88,6 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
         const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters ?? ''}`;
         const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters ?? ''}`;
-        this.console.log({ videoclipUrl, cloudEndpoint, endpoint, parameters })
 
         return { videoclipUrl, thumbnailUrl };
     }
