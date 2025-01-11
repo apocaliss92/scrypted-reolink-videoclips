@@ -146,8 +146,9 @@ export class ReolinkCameraClient {
     async getVideoClipUrl(videoclipPath: string, deviceId: string) {
         const fileNameWithExtension = videoclipPath.split('/').pop();
         const fileName = fileNameWithExtension.split('.').shift();
-        const downloadPath = `api.cgi?cmd=Download&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
-        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${videoclipPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
+        const sanitizedPath = videoclipPath.replace(' ', '%20');
+        const downloadPath = `api.cgi?cmd=Download&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
+        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
 
         return {
             downloadPath,
