@@ -79,23 +79,49 @@ export class ReolinkCameraClient {
         return pt;
     }
 
+    async checkSession() {
+        const url = new URL(`http://${this.host}/api.cgi`);
+        const params = url.searchParams;
+        params.set('cmd', 'GetEnc');
+        params.set('channel', this.channelId.toString());
+        const response = await this.requestWithLogin({
+            url,
+            responseType: 'json',
+        });
+
+        const error = response.body?.[0]?.error;
+        if (error && error.rspCode === -6) {
+            this.console.log('Session invalid');
+            return false;
+        } else {
+            return true;
+        }
+    }
+
     async login() {
-        if (!this.loggingIn) {
-            this.loggingIn = true;
-            if (this.tokenLease > Date.now()) {
-                return;
+        try {
+            if (!this.loggingIn) {
+                this.loggingIn = true;
+                if (this.tokenLease > Date.now()) {
+                    const sessionValid = await this.checkSession();
+                    if (sessionValid) {
+                        return;
+                    }
+                }
+
+                this.console.log(`token expired at ${this.tokenLease}, renewing...`);
+
+                const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
+                this.parameters = parameters
+                this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
+                this.loggingIn = false;
+                this.onTokenRefresh({
+                    parameters: this.parameters,
+                    tokenLease: this.tokenLease
+                });
             }
-
-            this.console.log(`token expired at ${this.tokenLease}, renewing...`);
-
-            const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
-            this.parameters = parameters
-            this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
+        } finally {
             this.loggingIn = false;
-            this.onTokenRefresh({
-                parameters: this.parameters,
-                tokenLease: this.tokenLease
-            });
         }
     }
 
@@ -199,6 +225,7 @@ export class ReolinkCameraClient {
         const url = new URL(`http://${this.host}/cgi-bin/api.cgi`);
         const params = url.searchParams;
         params.set('cmd', 'Snap');
+        params.set('snapType', 'main');
         params.set('channel', this.channelId.toString());
         params.set('rs', Date.now().toString());
 

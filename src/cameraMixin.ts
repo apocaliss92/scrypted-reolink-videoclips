@@ -11,7 +11,6 @@ const { endpointManager } = sdk;
 export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any> implements Settings, Camera, VideoClips {
     client: ReolinkCameraClient;
     killed: boolean;
-    fetchTokenInterval: NodeJS.Timeout;
     lastSnapshotRequested: number;
     lastSnapshot?: Promise<MediaObject>;
 
@@ -40,25 +39,10 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         super(options);
 
         this.plugin.mixinsMap[this.id] = this
-
-        this.fetchTokenInterval = setInterval(async () => {
-            try {
-                await this.fetchToken();
-            } catch (e) {
-                this.console.log('Error in fetchToken interval', e);
-            }
-        }, 20000);
-        this.fetchToken().catch(this.console.log);
-    }
-
-    async fetchToken() {
-        const client = await this.getClient();
-        await client.login();
     }
 
     async release() {
         this.killed = true;
-        this.fetchTokenInterval && clearInterval(this.fetchTokenInterval);
     }
 
     async getDeviceProperties() {
@@ -231,22 +215,12 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         let shouldGenerateNewImage = false;
 
         if (!snapshotInSeconds) {
-            this.console.log('Generating a new snapshot because snapshotInSeconds is not set');
             shouldGenerateNewImage = true;
         } else if (!this.lastSnapshot) {
-            this.console.log('Generating a new snapshot because there is no snapshot yet');
             shouldGenerateNewImage = true;
         } else if (this.lastSnapshot && (now - this.lastSnapshotRequested) >= (1000 * snapshotInSeconds)) {
-            this.console.log('Generating a new snapshot because the time is passed');
             shouldGenerateNewImage = true;
         }
-        this.console.log(`Generating snapshot: ${JSON.stringify({
-            shouldGenerateNewImage,
-            snapshotInSeconds,
-            now,
-            lastRequest: this.lastSnapshotRequested,
-            timePassed: (now - this.lastSnapshotRequested) >= (1000 * snapshotInSeconds)
-        })}`)
 
         if (shouldGenerateNewImage) {
             this.lastSnapshotRequested = now;
