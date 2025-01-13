@@ -57,7 +57,7 @@ export class ReolinkCameraClient {
             this.tokenLease = loginData.tokenLease;
         }
 
-        if (!this.parameters.token) {
+        if (!this.parameters?.token) {
             this.login().then();
         }
     }
