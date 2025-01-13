@@ -3,6 +3,7 @@ import { AuthFetchCredentialState, authHttpFetch } from '@scrypted/common/src/ht
 import { PassThrough, Readable } from 'stream';
 import { HttpFetchOptions } from '../../scrypted/server/src/fetch/http-fetch';
 import { getLoginParameters } from '../../scrypted/plugins/reolink/src/probe';
+import { findStartTimeFromFileName } from './utils';
 
 export interface VideoSearchTime {
     day: number;
@@ -24,18 +25,41 @@ export interface VideoSearchResult {
     width: number;
 }
 
+export interface LoginData {
+    tokenLease: number;
+    parameters: Record<string, string>;
+}
+
 export type VideoSearchType = 'sub' | 'main';
 
 export class ReolinkCameraClient {
     credential: AuthFetchCredentialState;
     parameters: Record<string, string>;
     tokenLease: number;
+    loggingIn = false;
 
-    constructor(public host: string, public username: string, public password: string, public channelId: number, public console: Console, public readonly forceToken?: boolean) {
+    constructor(
+        public host: string,
+        public username: string,
+        public password: string,
+        public channelId: number,
+        public console: Console,
+        public onTokenRefresh: (loginData: LoginData) => void,
+        loginData?: LoginData,
+        public readonly forceToken?: boolean
+    ) {
         this.credential = {
             username,
             password,
         };
+        if (loginData) {
+            this.parameters = loginData.parameters;
+            this.tokenLease = loginData.tokenLease;
+        }
+
+        if (!this.parameters.token) {
+            this.login().then();
+        }
     }
 
     private async request(options: HttpFetchOptions<Readable>, body?: Readable) {
@@ -56,15 +80,23 @@ export class ReolinkCameraClient {
     }
 
     async login() {
-        if (this.tokenLease > Date.now()) {
-            return;
+        if (!this.loggingIn) {
+            this.loggingIn = true;
+            if (this.tokenLease > Date.now()) {
+                return;
+            }
+
+            this.console.log(`token expired at ${this.tokenLease}, renewing...`);
+
+            const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
+            this.parameters = parameters
+            this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
+            this.loggingIn = false;
+            this.onTokenRefresh({
+                parameters: this.parameters,
+                tokenLease: this.tokenLease
+            });
         }
-
-        this.console.log(`token expired at ${this.tokenLease}, renewing...`);
-
-        const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
-        this.parameters = parameters
-        this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
     }
 
     async requestWithLogin(options: HttpFetchOptions<Readable>, body?: Readable) {
@@ -144,11 +176,14 @@ export class ReolinkCameraClient {
     }
 
     async getVideoClipUrl(videoclipPath: string, deviceId: string) {
+        await this.login();
         const fileNameWithExtension = videoclipPath.split('/').pop();
         const fileName = fileNameWithExtension.split('.').shift();
         const sanitizedPath = videoclipPath.replace(' ', '%20');
+        const timeStart = findStartTimeFromFileName(fileNameWithExtension);
+
         const downloadPath = `api.cgi?cmd=Download&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
-        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
+        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${sanitizedPath}&start=${timeStart}&seek=0&token=${this.parameters.token}`;
 
         return {
             downloadPath,
@@ -158,5 +193,20 @@ export class ReolinkCameraClient {
             fileName,
             fileNameWithExtension,
         };
+    }
+
+    async jpegSnapshot(timeout = 10000) {
+        const url = new URL(`http://${this.host}/cgi-bin/api.cgi`);
+        const params = url.searchParams;
+        params.set('cmd', 'Snap');
+        params.set('channel', this.channelId.toString());
+        params.set('rs', Date.now().toString());
+
+        const response = await this.requestWithLogin({
+            url,
+            timeout,
+        });
+
+        return response.body;
     }
 }

@@ -31,14 +31,6 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
         const videoclipId = videoclipPath.join('/');
         const dev = this.mixinsMap[deviceId];
 
-        this.console.log(`Resource requested: ${JSON.stringify({
-            decodedUrlWithParams,
-            decodedUrl,
-            webhook,
-            deviceId,
-            videoclipPath,
-        })}`);
-
         try {
             if (webhook === 'videoclip') {
                 const api = await dev.getClient();
@@ -100,6 +92,7 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                     return;
                 }
         } catch (e) {
+            this.console.log(`Error in webhook`, e);
             response.send(`${JSON.stringify(e)}, ${e.message}`, {
                 code: 400,
             });
@@ -132,6 +125,7 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
             [
                 ScryptedInterface.Settings,
                 ScryptedInterface.VideoClips,
+                ScryptedInterface.Camera,
             ] :
             undefined;
     }

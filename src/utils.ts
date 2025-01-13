@@ -46,11 +46,9 @@ export const getThumbnailMediaObject = async (props: {
     let thumbnailMo: MediaObject;
 
     try {
-        let removed = false;
         if (fs.existsSync(outputThumbnailFile) && fs.statSync(outputThumbnailFile).size === 0) {
             console.log(`Thumbnail ${outputThumbnailFile} corrupted, removing.`);
             fs.rmSync(outputThumbnailFile);
-            removed = true;
         }
         if (!fs.existsSync(outputThumbnailFile) && shouldDownload) {
             console.log(`Thumbnail not found in ${outputThumbnailFile}, generating.`);
@@ -84,6 +82,33 @@ export const getThumbnailMediaObject = async (props: {
     }
 }
 
+export const findStartTimeFromFileName = (fileName: string) => {
+    const regex = /.*Rec(\w{3})(?:_|_DST)(\d{8})_(\d{6})_.*/gm;
+
+    // Alternative syntax using RegExp constructor
+    // const regex = new RegExp('.*Rec(\\w{3})(?:_|_DST)(\\d{8})_(\\d{6})_.*', 'gm')
+
+    // Reset `lastIndex` if this regex is defined globally
+    // regex.lastIndex = 0;
+
+    let m;
+    const groups: string[] = [];
+
+    while ((m = regex.exec(fileName)) !== null) {
+        // This is necessary to avoid infinite loops with zero-width matches
+        if (m.index === regex.lastIndex) {
+            regex.lastIndex++;
+        }
+
+        // The result can be accessed through the `m`-variable.
+        m.forEach((match, groupIndex) => {
+            groups.push(match);
+        });
+    }
+
+    return `${groups[2]}${groups[3]}`;
+}
+
 const CAMERA_REGEX = new RegExp('(.*)\/(.*)\/RecM0(.)_(.*)_(.*)_(.*)_(.*)_(.*).mp4');
 const FLAGS_CAM_V2 = {
     resolution_index: [0, 7],
@@ -101,9 +126,82 @@ const FLAGS_CAM_V2 = {
     is_doorbell_record: [26, 1],
     ai_other: [27, 1],
 };
+const FLAGS_HUB_V0 = {
+    "resolution_index": [0, 7],
+    "tv_system": [7, 1],
+    "framerate": [8, 7],
+    "audio_index": [15, 2],
+    "ai_pd": [17, 1],
+    "ai_fd": [18, 1],
+    "ai_vd": [19, 1],
+    "ai_ad": [20, 1],
+    "encoder_type_index": [21, 2],
+    "is_schedule_record": [23, 1],
+    "is_motion_record": [24, 1],
+    "is_rf_record": [25, 1],
+    "is_doorbell_record": [26, 1],
+    "is_ai_other_record": [27, 1],
+    "picture_layout_index": [28, 7],
+    "package_delivered": [35, 1],
+    "package_takenaway": [36, 1],
+}
+const FLAGS_HUB_V1 = {
+    ...FLAGS_HUB_V0,
+    "package_event": [37, 1],
+}
+const FLAGS_MAPPING = {
+    "cam": {
+        2: FLAGS_CAM_V2,
+        3: FLAGS_CAM_V2,
+        4: FLAGS_CAM_V2,
+        9: FLAGS_CAM_V2,
+    },
+    "hub": {
+        0: FLAGS_HUB_V0,
+        1: FLAGS_HUB_V1,
+        2: {
+            "resolution_index": [0, 7],
+            "tv_system": [7, 1],
+            "framerate": [8, 7],
+            "audio_index": [15, 2],
+            "ai_pd": [17, 1],
+            "ai_fd": [18, 1],
+            "ai_vd": [19, 1],
+            "ai_ad": [20, 1],
+            "ai_other": [21, 2],
+            "encoder_type_index": [23, 1],
+            "is_schedule_record": [24, 1],
+            "is_motion_record": [25, 1],
+            "is_rf_record": [26, 1],
+            "is_doorbell_record": [27, 1],
+            "picture_layout_index": [28, 7],
+            "package_delivered": [35, 1],
+            "package_takenaway": [36, 1],
+            "package_event": [37, 1],
+            "upload_flag": [38, 1],
+        },
+    },
+}
+
 
 export const parseVideoclipName = (videoclipPath: string) => {
-    const [_, __, ___, version, date, startTime, endTime, hexValue, sizeHex] = CAMERA_REGEX.exec(videoclipPath);
+    const filenameWithExtension = videoclipPath.split('/').pop();
+    const filename = filenameWithExtension.split('.')[0];
+    const parts = filename.split('_');
+
+    let hexValue;
+    let sizeHex;
+    const version = parseInt(parts[0].substring(4, 6), 16)
+    let devType;
+    if (parts.length === 6) {
+        devType = 'cam';
+        hexValue = parts[4];
+        sizeHex = parts[5];
+    } else if (parts.length === 9) {
+        devType = 'hub';
+        hexValue = parts[7];
+        sizeHex = parts[8];
+    }
 
     const hexInt = parseInt(hexValue, 16);
 
@@ -121,7 +219,7 @@ export const parseVideoclipName = (videoclipPath: string) => {
     const flagValues = {};
 
     // Iterate through the flags in the mapping
-    const flagsMapping = FLAGS_CAM_V2;
+    const flagsMapping = FLAGS_MAPPING[devType][version] as Record<number, [number, number]>;
     for (const [flag, [bitPosition, bitSize]] of Object.entries(flagsMapping)) {
         // Create a mask for the specified bit range
         const mask = ((1 << bitSize) - 1) << bitPosition;
@@ -164,10 +262,10 @@ export const parseVideoclipName = (videoclipPath: string) => {
     }
 
     return {
-        version,
-        date,
-        startTime,
-        endTime,
+        // version,
+        // date,
+        // startTime,
+        // endTime,
         size,
         detectionClasses,
     };
