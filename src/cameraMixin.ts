@@ -118,7 +118,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
             }
 
             const videoclips: VideoClip[] = [];
-            this.console.log(`Videoclips found:`, allSearchedElements, dateRanges);
+            this.console.log(`Videoclips found:`, allSearchedElements, dateRanges, api.parameters.token);
 
             for (const searchElement of allSearchedElements) {
                 try {

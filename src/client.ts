@@ -37,6 +37,7 @@ export class ReolinkCameraClient {
     parameters: Record<string, string>;
     tokenLease: number;
     loggingIn = false;
+    refreshTokenInterval: NodeJS.Timeout;
 
     constructor(
         public host: string,
@@ -57,8 +58,16 @@ export class ReolinkCameraClient {
             this.tokenLease = loginData.tokenLease;
         }
 
-        if (!this.parameters?.token) {
-            this.login().then();
+        this.refreshTokenInterval = setInterval(async () => this.refreshSession(), 1000 * 60);
+        this.refreshSession().catch(this.console.log);
+    }
+
+    async refreshSession() {
+        try {
+            await this.logout();
+            await this.login();
+        } catch (e) {
+            this.console.log('Error in refreshSession', e);
         }
     }
 
@@ -79,23 +88,37 @@ export class ReolinkCameraClient {
         return pt;
     }
 
-    async checkSession() {
+    // async checkSession() {
+    //     const url = new URL(`http://${this.host}/api.cgi`);
+    //     const params = url.searchParams;
+    //     params.set('cmd', 'GetEnc');
+    //     params.set('channel', this.channelId.toString());
+    //     const response = await this.requestWithLogin({
+    //         url,
+    //         responseType: 'json',
+    //     });
+
+    //     const error = response.body?.[0]?.error;
+    //     if (error && error.rspCode === -6) {
+    //         this.console.log('Session invalid');
+    //         return false;
+    //     } else {
+    //         return true;
+    //     }
+    // }
+
+    async logout() {
         const url = new URL(`http://${this.host}/api.cgi`);
         const params = url.searchParams;
-        params.set('cmd', 'GetEnc');
-        params.set('channel', this.channelId.toString());
-        const response = await this.requestWithLogin({
+        params.set('cmd', 'Logout');
+        // params.set('channel', this.channelId.toString());
+        await this.requestWithLogin({
             url,
             responseType: 'json',
         });
 
-        const error = response.body?.[0]?.error;
-        if (error && error.rspCode === -6) {
-            this.console.log('Session invalid');
-            return false;
-        } else {
-            return true;
-        }
+        this.parameters = {};
+        this.tokenLease = undefined;
     }
 
     async login() {
@@ -103,22 +126,22 @@ export class ReolinkCameraClient {
             if (!this.loggingIn) {
                 this.loggingIn = true;
                 if (this.tokenLease > Date.now()) {
-                    const sessionValid = await this.checkSession();
-                    if (sessionValid) {
-                        return;
-                    }
+                    return;
                 }
 
-                this.console.log(`token expired at ${this.tokenLease}, renewing...`);
+                if (this.tokenLease) {
+                    this.console.log(`token expired at ${this.tokenLease}, renewing...`);
+                }
 
                 const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
                 this.parameters = parameters
                 this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
-                this.loggingIn = false;
                 this.onTokenRefresh({
                     parameters: this.parameters,
                     tokenLease: this.tokenLease
                 });
+                this.loggingIn = false;
+                this.console.log(`New token: ${parameters.token}`);
             }
         } finally {
             this.loggingIn = false;
@@ -202,14 +225,16 @@ export class ReolinkCameraClient {
     }
 
     async getVideoClipUrl(videoclipPath: string, deviceId: string) {
-        await this.login();
         const fileNameWithExtension = videoclipPath.split('/').pop();
         const fileName = fileNameWithExtension.split('.').shift();
-        const sanitizedPath = videoclipPath.replace(' ', '%20');
+        let sanitizedPath = videoclipPath.replaceAll(' ', '%20');
         const timeStart = findStartTimeFromFileName(fileNameWithExtension);
+        if (!sanitizedPath.startsWith('/')) {
+            sanitizedPath = `/${sanitizedPath}`;
+        }
 
-        const downloadPath = `api.cgi?cmd=Download&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
-        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${sanitizedPath}&start=${timeStart}&seek=0&token=${this.parameters.token}`;
+        const downloadPath = `api.cgi?cmd=Download&channel=${this.channelId.toString()}&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
+        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&channel=${this.channelId.toString()}&source=${sanitizedPath}&start=${timeStart}&seek=0&token=${this.parameters.token}`;
 
         return {
             downloadPath,
