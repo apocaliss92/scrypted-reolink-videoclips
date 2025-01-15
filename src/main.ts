@@ -25,19 +25,25 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
 
     async onRequest(request: HttpRequest, response: HttpResponse): Promise<void> {
         const decodedUrlWithParams = decodeURIComponent(request.url);
-        const [decodedUrl] = decodedUrlWithParams.split('?');
-        const [_, __, ___, ____, _____, webhook, ...rest] = decodedUrl.split('/');
-        const [deviceId, ...videoclipPath] = rest;
-        const videoclipId = videoclipPath.join('/');
+        const [decodedUrl, params] = decodedUrlWithParams.split('?');
+        const [_, __, ___, ____, _____, webhook] = decodedUrl.split('/');
+        const { deviceId, videoclipPath, parameters } = JSON.parse(params.split('=')[1] ?? '{}');
         const dev = this.mixinsMap[deviceId];
+        const devConsole = dev.console;
+        devConsole.log(`Request with parameters: ${JSON.stringify({
+            webhook,
+            deviceId,
+            videoclipPath,
+            parameters
+        })}`);
 
         try {
             if (webhook === 'videoclip') {
                 const api = await dev.getClient();
 
-                const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, deviceId);
-                this.console.log(`Videoclip requested: ${JSON.stringify({
-                    videoclipId,
+                const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipPath, deviceId);
+                devConsole.log(`Videoclip requested: ${JSON.stringify({
+                    videoclipPath,
                     deviceId,
                     playbackPathWithHost,
                 })}`);
@@ -64,7 +70,7 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                                 reject(err);
                             }
                         }).on('error', (e) => {
-                            this.console.log('Error fetching videoclip', e);
+                            devConsole.log('Error fetching videoclip', e);
                             reject(e)
                         });
                     });
@@ -74,15 +80,15 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                     await sendVideo();
                     return;
                 } catch (e) {
-                    this.console.log('Error fetching videoclip', e);
+                    devConsole.log('Error fetching videoclip', e);
                 }
             } else
                 if (webhook === 'thumbnail') {
-                    this.console.log(`Thumbnail requested: ${JSON.stringify({
-                        videoclipId,
+                    devConsole.log(`Thumbnail requested: ${JSON.stringify({
+                        videoclipPath,
                         deviceId,
                     })}`);
-                    const thumbnailMo = await dev.getVideoClipThumbnail(videoclipId);
+                    const thumbnailMo = await dev.getVideoClipThumbnail(videoclipPath);
                     const jpeg = await sdk.mediaManager.convertMediaObjectToBuffer(thumbnailMo, 'image/jpeg');
                     response.send(jpeg, {
                         headers: {
@@ -92,13 +98,14 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                     return;
                 }
         } catch (e) {
-            this.console.log(`Error in webhook`, e);
+            devConsole.log(`Error in webhook`, e);
             response.send(`${JSON.stringify(e)}, ${e.message}`, {
                 code: 400,
             });
 
             return;
         }
+
         response.send(`Webhook not found: ${decodedUrl}`, {
             code: 404,
         });

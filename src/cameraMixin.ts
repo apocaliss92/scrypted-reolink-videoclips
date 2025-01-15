@@ -1,4 +1,4 @@
-import sdk, { VideoClips, VideoClipOptions, VideoClip, MediaObject, VideoClipThumbnailOptions, Setting, Settings, RequestPictureOptions, Camera, PictureOptions } from "@scrypted/sdk";
+import sdk, { VideoClips, VideoClipOptions, VideoClip, MediaObject, VideoClipThumbnailOptions, Setting, Settings, RequestPictureOptions, Camera, PictureOptions, ScryptedInterface } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
@@ -11,7 +11,7 @@ const { endpointManager } = sdk;
 export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any> implements Settings, Camera, VideoClips {
     client: ReolinkCameraClient;
     killed: boolean;
-    lastSnapshotRequested: number;
+    batteryTimeout: NodeJS.Timeout;
     lastSnapshot?: Promise<MediaObject>;
 
     storageSettings = new StorageSettings(this, {
@@ -23,11 +23,6 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
             title: 'Password',
             type: 'password',
         },
-        snapshotInSeconds: {
-            title: 'Seconds for snapshot',
-            description: 'Specify an amount of seconds to regularly generate a snapshot. Leave blank to have the camera default behaviour',
-            type: 'number'
-        },
         loginParams: {
             hide: true,
             type: 'string',
@@ -38,11 +33,48 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     constructor(options: SettingsMixinDeviceOptions<any>, private plugin: ReolinkVideoclipssProvider) {
         super(options);
 
-        this.plugin.mixinsMap[this.id] = this
+        this.plugin.mixinsMap[this.id] = this;
+        this.checkBatteryStuff().catch(this.console.log);
     }
 
     async release() {
+        this.stopBatteryCheckInterval();
         this.killed = true;
+    }
+
+    async checkBatteryStuff() {
+        if (this.isBattery()) {
+            this.startBatteryCheckInterval();
+        } else {
+            this.stopBatteryCheckInterval();
+        }
+    }
+
+    stopBatteryCheckInterval() {
+        if (this.batteryTimeout) {
+            clearInterval(this.batteryTimeout);
+        }
+
+        this.batteryTimeout = undefined;
+    }
+
+    startBatteryCheckInterval() {
+        this.stopBatteryCheckInterval();
+
+        this.batteryTimeout = setInterval(async () => {
+            const client = await this.getClient();
+
+            try {
+                const { sleep } = await client.getBatteryInfo();
+                if (!sleep) {
+                    this.console.log('Camera is not sleeping, snapping');
+                    this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(), 'image/jpeg');
+                }
+            }
+            catch (e) {
+                this.console.log('Error in getting battery info', e);
+            }
+        }, 1000 * 10);
     }
 
     async getDeviceProperties() {
@@ -83,10 +115,17 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
     async getVideoclipWebhookUrls(videoclipPath: string) {
         const cloudEndpoint = await endpointManager.getPublicCloudEndpoint();
-        const [endpoint, parameters] = cloudEndpoint.split('?');
+        const [endpoint, parameters] = cloudEndpoint.split('?') ?? '';
+        const params = {
+            deviceId: this.id,
+            videoclipPath,
+            parameters
+        }
 
-        const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters ?? ''}`;
-        const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters ?? ''}`;
+        const videoclipUrl = `${endpoint}videoclip?params=${JSON.stringify(params)}`;
+        const thumbnailUrl = `${endpoint}thumbnail?params=${JSON.stringify(params)}`;
+        // const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters ?? ''}`;
+        // const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters ?? ''}`;
 
         return { videoclipUrl, thumbnailUrl };
     }
@@ -200,7 +239,6 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     async getMixinSettings(): Promise<Setting[]> {
         const settings = await this.storageSettings.getSettings();
 
-
         return settings;
     }
 
@@ -208,27 +246,40 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         this.storage.setItem(key, typeof value === 'string' ? value : JSON.stringify(value));
     }
 
-    async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
-        const now = new Date().getTime();
-        const { snapshotInSeconds } = this.storageSettings.values;
-        const client = await this.getClient();
-        let shouldGenerateNewImage = false;
-
-        if (!snapshotInSeconds) {
-            shouldGenerateNewImage = true;
-        } else if (!this.lastSnapshot) {
-            shouldGenerateNewImage = true;
-        } else if (this.lastSnapshot && (now - this.lastSnapshotRequested) >= (1000 * snapshotInSeconds)) {
-            shouldGenerateNewImage = true;
-        }
-
-        if (shouldGenerateNewImage) {
-            this.lastSnapshotRequested = now;
-            this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(options?.timeout), 'image/jpeg');
-        }
-
-        return this.lastSnapshot;
+    isBattery() {
+        return this.interfaces.includes(ScryptedInterface.Battery);
     }
+
+    async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
+        const client = await this.getClient();
+        if (this.isBattery()) {
+            return this.lastSnapshot;
+        } else {
+            return this.createMediaObject(await client.jpegSnapshot(options?.timeout), 'image/jpeg');
+        }
+    }
+
+    // async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
+    //     const now = new Date().getTime();
+    //     const { snapshotInSeconds } = this.storageSettings.values;
+    //     const client = await this.getClient();
+    //     let shouldGenerateNewImage = false;
+
+    //     if (!snapshotInSeconds) {
+    //         shouldGenerateNewImage = true;
+    //     } else if (!this.lastSnapshot) {
+    //         shouldGenerateNewImage = true;
+    //     } else if (this.lastSnapshot && (now - this.lastSnapshotRequested) >= (1000 * snapshotInSeconds)) {
+    //         shouldGenerateNewImage = true;
+    //     }
+
+    //     if (shouldGenerateNewImage) {
+    //         this.lastSnapshotRequested = now;
+    //         this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(options?.timeout), 'image/jpeg');
+    //     }
+
+    //     return this.lastSnapshot;
+    // }
 
     async takePicture(options?: RequestPictureOptions) {
         return this.takeSmartCameraPicture(options);

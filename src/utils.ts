@@ -85,12 +85,6 @@ export const getThumbnailMediaObject = async (props: {
 export const findStartTimeFromFileName = (fileName: string) => {
     const regex = /.*Rec(\w{3})(?:_|_DST)(\d{8})_(\d{6})_.*/gm;
 
-    // Alternative syntax using RegExp constructor
-    // const regex = new RegExp('.*Rec(\\w{3})(?:_|_DST)(\\d{8})_(\\d{6})_.*', 'gm')
-
-    // Reset `lastIndex` if this regex is defined globally
-    // regex.lastIndex = 0;
-
     let m;
     const groups: string[] = [];
 
@@ -109,16 +103,15 @@ export const findStartTimeFromFileName = (fileName: string) => {
     return `${groups[2]}${groups[3]}`;
 }
 
-const CAMERA_REGEX = new RegExp('(.*)\/(.*)\/RecM0(.)_(.*)_(.*)_(.*)_(.*)_(.*).mp4');
 const FLAGS_CAM_V2 = {
     resolution_index: [0, 7],
     tv_system: [7, 1],
     framerate: [8, 7],
     audio_index: [15, 2],
-    ai_pd: [17, 1], // person detection
-    ai_fd: [18, 1], // face detection
-    ai_vd: [19, 1], // vehicle detection
-    ai_ad: [20, 1], // animal detection
+    ai_pd: [17, 1],
+    ai_fd: [18, 1],
+    ai_vd: [19, 1],
+    ai_ad: [20, 1],
     encoder_type_index: [21, 2],
     is_schedule_record: [23, 1],
     is_motion_record: [24, 1],
@@ -185,90 +178,98 @@ const FLAGS_MAPPING = {
 
 
 export const parseVideoclipName = (videoclipPath: string) => {
-    const filenameWithExtension = videoclipPath.split('/').pop();
-    const filename = filenameWithExtension.split('.')[0];
-    const parts = filename.split('_');
+    try {
+        const filenameWithExtension = videoclipPath.split('/').pop();
+        const filename = filenameWithExtension.split('.')[0];
+        const parts = filename.split('_');
 
-    let hexValue;
-    let sizeHex;
-    const version = parseInt(parts[0].substring(4, 6), 16)
-    let devType;
-    if (parts.length === 6) {
-        devType = 'cam';
-        hexValue = parts[4];
-        sizeHex = parts[5];
-    } else if (parts.length === 9) {
-        devType = 'hub';
-        hexValue = parts[7];
-        sizeHex = parts[8];
-    }
+        let hexValue;
+        let sizeHex;
+        const version = parseInt(parts[0].substring(4, 6), 16)
+        let devType;
+        if (parts.length === 6) {
+            devType = 'cam';
+            hexValue = parts[4];
+            sizeHex = parts[5];
+        } else if (parts.length === 9) {
+            devType = 'hub';
+            hexValue = parts[7];
+            sizeHex = parts[8];
+        }
 
-    const hexInt = parseInt(hexValue, 16);
+        const hexInt = parseInt(hexValue, 16);
 
-    // Reverse the binary representation of the integer
-    const hexIntReversed = parseInt(
-        hexInt
-            .toString(2) // Convert to binary string
-            .padStart(hexValue.length * 4, '0') // Pad with zeros
-            .split('') // Split into array
-            .reverse() // Reverse the array
-            .join(''), // Join back into string
-        2 // Convert back to integer
-    );
-
-    const flagValues = {};
-
-    // Iterate through the flags in the mapping
-    const flagsMapping = FLAGS_MAPPING[devType][version] as Record<number, [number, number]>;
-    for (const [flag, [bitPosition, bitSize]] of Object.entries(flagsMapping)) {
-        // Create a mask for the specified bit range
-        const mask = ((1 << bitSize) - 1) << bitPosition;
-
-        // Extract the reversed value for this flag
-        const flagValueReversed = (hexIntReversed & mask) >> bitPosition;
-
-        // Reverse the extracted value and store it in the result
-        const flagValue = parseInt(
-            flagValueReversed
+        // Reverse the binary representation of the integer
+        const hexIntReversed = parseInt(
+            hexInt
                 .toString(2) // Convert to binary string
-                .padStart(bitSize, '0') // Pad with zeros to match the bit size
+                .padStart(hexValue.length * 4, '0') // Pad with zeros
                 .split('') // Split into array
                 .reverse() // Reverse the array
                 .join(''), // Join back into string
             2 // Convert back to integer
         );
 
-        flagValues[flag] = flagValue;
-    }
+        const flagValues = {};
 
-    const size = Number(`0x${sizeHex}`);
+        // Iterate through the flags in the mapping
+        const flagsMapping = FLAGS_MAPPING[devType][version] as Record<number, [number, number]>;
+        for (const [flag, [bitPosition, bitSize]] of Object.entries(flagsMapping)) {
+            // Create a mask for the specified bit range
+            const mask = ((1 << bitSize) - 1) << bitPosition;
 
-    const detectionClasses: string[] = [];
+            // Extract the reversed value for this flag
+            const flagValueReversed = (hexIntReversed & mask) >> bitPosition;
 
-    if (flagValues['ai_pd'] === 1) {
-        detectionClasses.push('person');
-    }
-    if (flagValues['ai_vd'] === 1) {
-        detectionClasses.push('vehicle');
-    }
-    if (flagValues['ai_fd'] === 1) {
-        detectionClasses.push('face');
-    }
-    if (flagValues['ai_ad'] === 1) {
-        detectionClasses.push('animal');
-    }
-    if (flagValues['is_motion_record'] === 1) {
-        detectionClasses.push('motion');
-    }
+            // Reverse the extracted value and store it in the result
+            const flagValue = parseInt(
+                flagValueReversed
+                    .toString(2) // Convert to binary string
+                    .padStart(bitSize, '0') // Pad with zeros to match the bit size
+                    .split('') // Split into array
+                    .reverse() // Reverse the array
+                    .join(''), // Join back into string
+                2 // Convert back to integer
+            );
 
-    return {
-        // version,
-        // date,
-        // startTime,
-        // endTime,
-        size,
-        detectionClasses,
-    };
+            flagValues[flag] = flagValue;
+        }
+
+        const size = Number(`0x${sizeHex}`);
+
+        const detectionClasses: string[] = [];
+
+        if (flagValues['ai_pd'] === 1) {
+            detectionClasses.push('person');
+        }
+        if (flagValues['ai_vd'] === 1) {
+            detectionClasses.push('vehicle');
+        }
+        if (flagValues['ai_fd'] === 1) {
+            detectionClasses.push('face');
+        }
+        if (flagValues['ai_ad'] === 1) {
+            detectionClasses.push('animal');
+        }
+        if (flagValues['is_motion_record'] === 1) {
+            detectionClasses.push('motion');
+        }
+
+        if (!detectionClasses.length) {
+            detectionClasses.push('motion');
+        }
+
+        return {
+            // version,
+            // date,
+            // startTime,
+            // endTime,
+            size,
+            detectionClasses,
+        };
+    } catch (e) {
+        console.log('Error parsing the filename', e);
+    }
 }
 
 export const splitDateRangeByDay = (start: number, end: number) => {

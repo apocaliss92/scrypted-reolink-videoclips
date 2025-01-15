@@ -58,7 +58,7 @@ export class ReolinkCameraClient {
             this.tokenLease = loginData.tokenLease;
         }
 
-        this.refreshTokenInterval = setInterval(async () => this.refreshSession(), 1000 * 60);
+        this.refreshTokenInterval = setInterval(async () => this.refreshSession(), 1000 * 60 * 5);
         this.refreshSession().catch(this.console.log);
     }
 
@@ -88,30 +88,10 @@ export class ReolinkCameraClient {
         return pt;
     }
 
-    // async checkSession() {
-    //     const url = new URL(`http://${this.host}/api.cgi`);
-    //     const params = url.searchParams;
-    //     params.set('cmd', 'GetEnc');
-    //     params.set('channel', this.channelId.toString());
-    //     const response = await this.requestWithLogin({
-    //         url,
-    //         responseType: 'json',
-    //     });
-
-    //     const error = response.body?.[0]?.error;
-    //     if (error && error.rspCode === -6) {
-    //         this.console.log('Session invalid');
-    //         return false;
-    //     } else {
-    //         return true;
-    //     }
-    // }
-
     async logout() {
         const url = new URL(`http://${this.host}/api.cgi`);
         const params = url.searchParams;
         params.set('cmd', 'Logout');
-        // params.set('channel', this.channelId.toString());
         await this.requestWithLogin({
             url,
             responseType: 'json',
@@ -228,13 +208,12 @@ export class ReolinkCameraClient {
         const fileNameWithExtension = videoclipPath.split('/').pop();
         const fileName = fileNameWithExtension.split('.').shift();
         let sanitizedPath = videoclipPath.replaceAll(' ', '%20');
-        const timeStart = findStartTimeFromFileName(fileNameWithExtension);
         if (!sanitizedPath.startsWith('/')) {
             sanitizedPath = `/${sanitizedPath}`;
         }
 
-        const downloadPath = `api.cgi?cmd=Download&channel=${this.channelId.toString()}&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
-        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&channel=${this.channelId.toString()}&source=${sanitizedPath}&start=${timeStart}&seek=0&token=${this.parameters.token}`;
+        const downloadPath = `api.cgi?cmd=Download&source=${sanitizedPath}&output=${fileNameWithExtension}&token=${this.parameters.token}`;
+        const playbackPath = `cgi-bin/api.cgi?cmd=Playback&source=${sanitizedPath}&output=${sanitizedPath}&token=${this.parameters.token}`;
 
         return {
             downloadPath,
@@ -260,5 +239,40 @@ export class ReolinkCameraClient {
         });
 
         return response.body;
+    }
+
+    async getBatteryInfo() {
+        const url = new URL(`http://${this.host}/api.cgi`);
+
+        const body = [
+            {
+                cmd: "GetBatteryInfo",
+                action: 0,
+                param: { channel: this.channelId }
+            },
+            {
+                cmd: "GetChannelstatus",
+            }
+        ];
+
+        const response = await this.requestWithLogin({
+            url,
+            responseType: 'json',
+            method: 'POST',
+        }, this.createReadable(body));
+
+        const error = response.body?.find(elem => elem.error)?.error;
+        if (error) {
+            this.console.error('error during call to getBatteryInfo', error);
+        }
+
+        const batteryInfoEntry = response.body.find(entry => entry.cmd === 'GetBatteryInfo')?.value?.Battery;
+        const channelStatusEntry = response.body.find(entry => entry.cmd === 'GetChannelstatus')?.value?.status
+            ?.find(chStatus => chStatus.channel === this.channelId)
+
+        return {
+            batteryPercent: batteryInfoEntry?.batteryPercent,
+            sleep: channelStatusEntry?.sleep === 1,
+        }
     }
 }
