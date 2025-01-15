@@ -24,93 +24,104 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
     }
 
     async onRequest(request: HttpRequest, response: HttpResponse): Promise<void> {
-        const decodedUrlWithParams = decodeURIComponent(request.url);
-        const [decodedUrl, params] = decodedUrlWithParams.split('?');
-        const [_, __, ___, ____, _____, webhook] = decodedUrl.split('/');
-        const { deviceId, videoclipPath, parameters } = JSON.parse(params.split('=')[1] ?? '{}');
-        const dev = this.mixinsMap[deviceId];
-        const devConsole = dev.console;
-        devConsole.log(`Request with parameters: ${JSON.stringify({
-            webhook,
-            deviceId,
-            videoclipPath,
-            parameters
-        })}`);
+        const url = new URL(`http://localhost${request.url}`);
+        const params = url.searchParams.get('params') ?? '{}';
 
         try {
-            if (webhook === 'videoclip') {
-                const api = await dev.getClient();
+            const [_, __, ___, ____, _____, webhook] = url.pathname.split('/');
+            const { deviceId, videoclipPath, parameters } = JSON.parse(params);
+            const dev = this.mixinsMap[deviceId];
+            const devConsole = dev.console;
+            devConsole.log(`Request with parameters: ${JSON.stringify({
+                webhook,
+                deviceId,
+                videoclipPath,
+                parameters
+            })}`);
 
-                const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipPath, deviceId);
-                devConsole.log(`Videoclip requested: ${JSON.stringify({
-                    videoclipPath,
-                    deviceId,
-                    playbackPathWithHost,
-                })}`);
+            try {
+                if (webhook === 'videoclip') {
+                    const api = await dev.getClient();
 
-                const sendVideo = async () => {
-                    return new Promise<void>((resolve, reject) => {
-                        http.get(playbackPathWithHost, { headers: request.headers }, (httpResponse) => {
-                            if (httpResponse.statusCode[0] === 400) {
-                                reject(new Error(`Error loading the video: ${httpResponse.statusCode} - ${httpResponse.statusMessage}. Headers: ${JSON.stringify(request.headers)}`));
-                                return;
-                            }
-
-                            try {
-                                response.sendStream((async function* () {
-                                    for await (const chunk of httpResponse) {
-                                        yield chunk;
-                                    }
-                                })(), {
-                                    headers: httpResponse.headers
-                                });
-
-                                resolve();
-                            } catch (err) {
-                                reject(err);
-                            }
-                        }).on('error', (e) => {
-                            devConsole.log('Error fetching videoclip', e);
-                            reject(e)
-                        });
-                    });
-                }
-
-                try {
-                    await sendVideo();
-                    return;
-                } catch (e) {
-                    devConsole.log('Error fetching videoclip', e);
-                }
-            } else
-                if (webhook === 'thumbnail') {
-                    devConsole.log(`Thumbnail requested: ${JSON.stringify({
+                    const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipPath, deviceId);
+                    devConsole.log(`Videoclip requested: ${JSON.stringify({
                         videoclipPath,
                         deviceId,
+                        playbackPathWithHost,
                     })}`);
-                    const thumbnailMo = await dev.getVideoClipThumbnail(videoclipPath);
-                    const jpeg = await sdk.mediaManager.convertMediaObjectToBuffer(thumbnailMo, 'image/jpeg');
-                    response.send(jpeg, {
-                        headers: {
-                            'Content-Type': 'image/jpeg',
-                        }
-                    });
-                    return;
-                }
-        } catch (e) {
-            devConsole.log(`Error in webhook`, e);
-            response.send(`${JSON.stringify(e)}, ${e.message}`, {
-                code: 400,
+
+                    const sendVideo = async () => {
+                        return new Promise<void>((resolve, reject) => {
+                            http.get(playbackPathWithHost, { headers: request.headers }, (httpResponse) => {
+                                if (httpResponse.statusCode[0] === 400) {
+                                    reject(new Error(`Error loading the video: ${httpResponse.statusCode} - ${httpResponse.statusMessage}. Headers: ${JSON.stringify(request.headers)}`));
+                                    return;
+                                }
+
+                                try {
+                                    response.sendStream((async function* () {
+                                        for await (const chunk of httpResponse) {
+                                            yield chunk;
+                                        }
+                                    })(), {
+                                        headers: httpResponse.headers
+                                    });
+
+                                    resolve();
+                                } catch (err) {
+                                    reject(err);
+                                }
+                            }).on('error', (e) => {
+                                devConsole.log('Error fetching videoclip', e);
+                                reject(e)
+                            });
+                        });
+                    }
+
+                    try {
+                        await sendVideo();
+                        return;
+                    } catch (e) {
+                        devConsole.log('Error fetching videoclip', e);
+                    }
+                } else
+                    if (webhook === 'thumbnail') {
+                        devConsole.log(`Thumbnail requested: ${JSON.stringify({
+                            videoclipPath,
+                            deviceId,
+                        })}`);
+                        const thumbnailMo = await dev.getVideoClipThumbnail(videoclipPath);
+                        const jpeg = await sdk.mediaManager.convertMediaObjectToBuffer(thumbnailMo, 'image/jpeg');
+                        response.send(jpeg, {
+                            headers: {
+                                'Content-Type': 'image/jpeg',
+                            }
+                        });
+                        return;
+                    }
+            } catch (e) {
+                devConsole.log(`Error in webhook`, e);
+                response.send(`${JSON.stringify(e)}, ${e.message}`, {
+                    code: 400,
+                });
+
+                return;
+            }
+
+            response.send(`Webhook not found: ${url.pathname}`, {
+                code: 404,
             });
 
             return;
+        } catch (e) {
+            this.console.log('Error in data parsing for webhook', e);
+            response.send(`Error in data parsing for webhook: ${JSON.stringify({
+                params,
+                url: request.url
+            })}`, {
+                code: 500,
+            });
         }
-
-        response.send(`Webhook not found: ${decodedUrl}`, {
-            code: 404,
-        });
-
-        return;
     }
 
     async getSettings() {

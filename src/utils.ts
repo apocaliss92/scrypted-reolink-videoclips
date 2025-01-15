@@ -173,6 +173,27 @@ const FLAGS_MAPPING = {
             "package_event": [37, 1],
             "upload_flag": [38, 1],
         },
+        // 2: {
+        //     "resolution_index": [0, 7],
+        //     "tv_system": [7, 1],
+        //     "framerate": [8, 7],
+        //     "audio_index": [15, 2],
+        //     "ai_pd": [17, 1],
+        //     "ai_fd": [18, 1],
+        //     "ai_vd": [19, 1],
+        //     "ai_ad": [20, 1],
+        //     "ai_other": [21, 2],
+        //     "encoder_type_index": [23, 1],
+        //     "is_schedule_record": [24, 1],
+        //     "is_motion_record": [25, 1],
+        //     "is_rf_record": [26, 1],
+        //     "is_doorbell_record": [27, 1],
+        //     "picture_layout_index": [28, 7],
+        //     "package_delivered": [35, 1],
+        //     "package_takenaway": [36, 1],
+        //     "package_event": [37, 1],
+        //     "upload_flag": [38, 1],
+        // },
     },
 }
 
@@ -251,11 +272,7 @@ export const parseVideoclipName = (videoclipPath: string) => {
         if (flagValues['ai_ad'] === 1) {
             detectionClasses.push('animal');
         }
-        if (flagValues['is_motion_record'] === 1) {
-            detectionClasses.push('motion');
-        }
-
-        if (!detectionClasses.length) {
+        if (flagValues['is_motion_record'] === 1 || flagValues['ai_other'] === 1) {
             detectionClasses.push('motion');
         }
 

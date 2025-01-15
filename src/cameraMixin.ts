@@ -66,7 +66,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
             try {
                 const { sleep } = await client.getBatteryInfo();
-                if (!sleep) {
+                if (sleep === false) {
                     this.console.log('Camera is not sleeping, snapping');
                     this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(), 'image/jpeg');
                 }
@@ -114,18 +114,15 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     }
 
     async getVideoclipWebhookUrls(videoclipPath: string) {
-        const cloudEndpoint = await endpointManager.getPublicCloudEndpoint();
+        const cloudEndpoint = await endpointManager.getCloudEndpoint(undefined, { public: true });
         const [endpoint, parameters] = cloudEndpoint.split('?') ?? '';
         const params = {
             deviceId: this.id,
             videoclipPath,
-            parameters
         }
 
-        const videoclipUrl = `${endpoint}videoclip?params=${JSON.stringify(params)}`;
-        const thumbnailUrl = `${endpoint}thumbnail?params=${JSON.stringify(params)}`;
-        // const videoclipUrl = `${endpoint}videoclip/${this.id}/${videoclipPath}?${parameters ?? ''}`;
-        // const thumbnailUrl = `${endpoint}thumbnail/${this.id}/${videoclipPath}?${parameters ?? ''}`;
+        const videoclipUrl = `${endpoint}videoclip?params=${JSON.stringify(params)}&${parameters}`;
+        const thumbnailUrl = `${endpoint}thumbnail?params=${JSON.stringify(params)}&${parameters}`;
 
         return { videoclipUrl, thumbnailUrl };
     }
