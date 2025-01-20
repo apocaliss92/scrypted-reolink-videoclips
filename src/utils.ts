@@ -39,9 +39,9 @@ export const getThumbnailMediaObject = async (props: {
     filename: string,
     videoclipUrl: string,
     console: Console,
-    shouldDownload: boolean
 }) => {
-    const { filename, thumbnailFolder, videoclipUrl, console, shouldDownload } = props;
+    const { filename: filenameSrc, thumbnailFolder, videoclipUrl, console } = props;
+    const filename = filenameSrc.replaceAll(' ', '_');
     const outputThumbnailFile = path.join(thumbnailFolder, `${filename}.jpg`);
     let thumbnailMo: MediaObject;
 
@@ -50,7 +50,8 @@ export const getThumbnailMediaObject = async (props: {
             console.log(`Thumbnail ${outputThumbnailFile} corrupted, removing.`);
             fs.rmSync(outputThumbnailFile);
         }
-        if (!fs.existsSync(outputThumbnailFile) && shouldDownload) {
+
+        if (!fs.existsSync(outputThumbnailFile)) {
             console.log(`Thumbnail not found in ${outputThumbnailFile}, generating.`);
 
             const mo = await mediaManager.createFFmpegMediaObject({
@@ -69,7 +70,7 @@ export const getThumbnailMediaObject = async (props: {
         }
 
         if (fs.existsSync(outputThumbnailFile)) {
-            const fileURLToPath = url.pathToFileURL(outputThumbnailFile).toString()
+            const fileURLToPath = url.pathToFileURL(outputThumbnailFile).toString();
             thumbnailMo = await mediaManager.createMediaObjectFromUrl(fileURLToPath);
         }
 

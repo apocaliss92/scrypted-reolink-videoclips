@@ -275,4 +275,29 @@ export class ReolinkCameraClient {
             sleep: channelStatusEntry ? channelStatusEntry.sleep === 1 : undefined,
         }
     }
+
+    async getWhiteLed() {
+        const url = new URL(`http://${this.host}/api.cgi`);
+
+        const body = [
+            {
+                cmd: "GetWhiteLed",
+                action: 0,
+                param: { channel: this.channelId }
+            }
+        ];
+
+        const response = await this.requestWithLogin({
+            url,
+            responseType: 'json',
+            method: 'POST',
+        }, this.createReadable(body));
+
+        const error = response.body?.find(elem => elem.error)?.error;
+        if (error) {
+            this.console.error('error during call to getWhiteLed', error);
+        }
+
+        return response.body[0];
+    }
 }

@@ -5,14 +5,29 @@ import keyBy from "lodash/keyBy";
 import { ReolinkCameraClient, VideoSearchType, VideoSearchTime, VideoSearchResult } from "./client";
 import ReolinkVideoclipssProvider from "./main";
 import { getThumbnailMediaObject, getFolderPaths, parseVideoclipName, splitDateRangeByDay } from "./utils";
+import fs from 'fs';
+import path from 'path';
 
 const { endpointManager } = sdk;
+
+interface VideoclipFileData {
+    filename: string;
+    fullPath: string;
+    time: VideoSearchTime;
+    type: 'video' | 'image';
+    size: number;
+}
+
+const videoclippathRegex = new RegExp('(.{4})(.{2})(.{2})(.{2})(.{2})(.{2})');
 
 export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any> implements Settings, Camera, VideoClips {
     client: ReolinkCameraClient;
     killed: boolean;
     batteryTimeout: NodeJS.Timeout;
+    ftpScanTimeout: NodeJS.Timeout;
     lastSnapshot?: Promise<MediaObject>;
+    lastSnapshotTaken?: number;
+    ftpScanData: VideoclipFileData[] = [];
 
     storageSettings = new StorageSettings(this, {
         username: {
@@ -28,6 +43,30 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
             type: 'string',
             json: true,
         },
+        forceSnapshotMinutes: {
+            title: 'Force snapshot in minutes',
+            description: 'Force a snapshot on regular interval if the camera did not get events for a long time',
+            defaultValue: 60,
+            type: 'number',
+        },
+        ftp: {
+            title: 'Fetch from FTP folder',
+            type: 'boolean',
+            immediate: true,
+            onPut: async () => this.checkFtpScan()
+        },
+        ftpFolder: {
+            title: 'FTP folder',
+            description: 'FTP folder where reolink stores the clips',
+            type: 'string',
+            onPut: async () => this.checkFtpScan()
+        },
+        filenamePrefix: {
+            title: 'Filename prefix',
+            description: 'Prefix to filter out the camera videoclips stored on the FTP server',
+            type: 'string',
+            onPut: async () => this.checkFtpScan()
+        },
     });
 
     constructor(options: SettingsMixinDeviceOptions<any>, private plugin: ReolinkVideoclipssProvider) {
@@ -35,11 +74,80 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
         this.plugin.mixinsMap[this.id] = this;
         this.checkBatteryStuff().catch(this.console.log);
+        this.checkFtpScan().catch(this.console.log);
     }
 
     async release() {
         this.stopBatteryCheckInterval();
         this.killed = true;
+    }
+
+    async checkFtpScan() {
+        const { ftp, ftpFolder } = this.storageSettings.values;
+        if (ftp && ftpFolder) {
+            this.startFtpScan();
+        } else {
+            this.stopFtpScan();
+        }
+    }
+
+    stopFtpScan() {
+        if (this.ftpScanTimeout) {
+            clearInterval(this.ftpScanTimeout);
+        }
+
+        this.ftpScanTimeout = undefined;
+    }
+
+    startFtpScan() {
+        const { ftpFolder, filenamePrefix } = this.storageSettings.values;
+        this.stopFtpScan();
+
+        const searchFile = (dir: string, currentResult: VideoclipFileData[] = []) => {
+            const result: VideoclipFileData[] = [...currentResult];
+            const files = fs.readdirSync(dir);
+
+            // this.console.log('Files', files);
+            // search through the files
+            for (const file of files) {
+                const fullPath = path.join(dir, file);
+
+                const fileStat = fs.statSync(fullPath);
+
+                if (fileStat.isDirectory()) {
+                    result.push(...searchFile(fullPath, result));
+                } else {
+                    const [_, timestamp] = file.split(filenamePrefix);
+                    const [__, year, mon, day, hour, min, sec] = videoclippathRegex.exec(timestamp);
+
+                    result.push({
+                        filename: file,
+                        fullPath,
+                        time: {
+                            day: Number(day),
+                            hour: Number(hour),
+                            min: Number(min),
+                            mon: Number(mon),
+                            sec: Number(sec),
+                            year: Number(year),
+                        },
+                        type: file.endsWith('mp4') ? 'video' : 'image',
+                        size: fileStat.size
+                    })
+                }
+            }
+
+            return result;
+        }
+
+        this.ftpScanTimeout = setInterval(async () => {
+            try {
+                this.ftpScanData = searchFile(ftpFolder);
+            }
+            catch (e) {
+                this.console.log('Error in getting battery info', e);
+            }
+        }, 1000 * 10);
     }
 
     async checkBatteryStuff() {
@@ -69,6 +177,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                 if (sleep === false) {
                     this.console.log('Camera is not sleeping, snapping');
                     this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(), 'image/jpeg');
+                    this.lastSnapshotTaken = Date.now();
                 }
             }
             catch (e) {
@@ -142,51 +251,88 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
     async getVideoClips(options?: VideoClipOptions, streamType: VideoSearchType = 'main') {
         try {
-            const api = await this.getClient();
-
-            const dateRanges = splitDateRangeByDay(options.startTime, options.endTime);
-
-            let allSearchedElements: VideoSearchResult[] = [];
-
-            for (const dateRange of dateRanges) {
-                const response = await api.getVideoClips({ startTime: dateRange.start, endTime: dateRange.end });
-                allSearchedElements.push(...response);
-            }
+            const { ftp } = this.storageSettings.values;
 
             const videoclips: VideoClip[] = [];
-            this.console.log(`Videoclips found:`, allSearchedElements, dateRanges, api.parameters.token);
 
-            for (const searchElement of allSearchedElements) {
-                try {
-                    const startTime = this.processDate(searchElement.StartTime);
-                    const entdTime = this.processDate(searchElement.EndTime);
+            if (ftp) {
+                for (const item of this.ftpScanData) {
+                    const timestamp = this.processDate(item.time);
 
-                    const durationInMs = entdTime - startTime;
-                    const videoclipPath = searchElement.name;
-                    const { detectionClasses } = parseVideoclipName(videoclipPath)
+                    if (item.type === 'video' && timestamp >= options.startTime && timestamp <= options.endTime) {
+                        // Check if possible to fetch it with decent performances
+                        const durationInMs = 30;
+                        const videoclipPath = item.fullPath;
 
-                    const event = 'motion';
-                    const { thumbnailUrl, videoclipUrl } = await this.getVideoclipWebhookUrls(videoclipPath);
-                    videoclips.push({
-                        id: videoclipPath,
-                        startTime,
-                        duration: Math.round(durationInMs),
-                        videoId: videoclipPath,
-                        thumbnailId: videoclipPath,
-                        detectionClasses,
-                        event,
-                        description: event,
-                        resources: {
-                            thumbnail: {
-                                href: thumbnailUrl
-                            },
-                            video: {
-                                href: videoclipUrl
+                        const event = 'motion';
+                        const { thumbnailUrl, videoclipUrl } = await this.getVideoclipWebhookUrls(videoclipPath);
+                        videoclips.push({
+                            id: videoclipPath,
+                            startTime: timestamp,
+                            // duration: Math.round(durationInMs),
+                            videoId: videoclipPath,
+                            thumbnailId: videoclipPath,
+                            detectionClasses: [event],
+                            event,
+                            description: event,
+                            resources: {
+                                thumbnail: {
+                                    href: thumbnailUrl
+                                },
+                                video: {
+                                    href: videoclipUrl
+                                }
                             }
-                        }
-                    })
-                } catch (e) {
-                    this.console.log('error generating clip', e)
+                        });
+                    }
+                }
+                this.console.log(`Videoclips found:`, videoclips);
+            } else {
+                const api = await this.getClient();
+
+                const dateRanges = splitDateRangeByDay(options.startTime, options.endTime);
+
+                let allSearchedElements: VideoSearchResult[] = [];
+
+                for (const dateRange of dateRanges) {
+                    const response = await api.getVideoClips({ startTime: dateRange.start, endTime: dateRange.end });
+                    allSearchedElements.push(...response);
+                }
+
+                this.console.log(`Videoclips found:`, allSearchedElements, dateRanges, api.parameters.token);
+
+                for (const searchElement of allSearchedElements) {
+                    try {
+                        const startTime = this.processDate(searchElement.StartTime);
+                        const entdTime = this.processDate(searchElement.EndTime);
+
+                        const durationInMs = entdTime - startTime;
+                        const videoclipPath = searchElement.name;
+                        const { detectionClasses } = parseVideoclipName(videoclipPath)
+
+                        const event = 'motion';
+                        const { thumbnailUrl, videoclipUrl } = await this.getVideoclipWebhookUrls(videoclipPath);
+                        videoclips.push({
+                            id: videoclipPath,
+                            startTime,
+                            duration: Math.round(durationInMs),
+                            videoId: videoclipPath,
+                            thumbnailId: videoclipPath,
+                            detectionClasses,
+                            event,
+                            description: event,
+                            resources: {
+                                thumbnail: {
+                                    href: thumbnailUrl
+                                },
+                                video: {
+                                    href: videoclipUrl
+                                }
+                            }
+                        });
+                    } catch (e) {
+                        this.console.log('error generating clip', e)
+                    }
                 }
             }
 
@@ -197,13 +343,20 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     }
 
     async getVideoclipParams(videoclipId: string) {
-        const api = await this.getClient();
-        const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, this.id);
-
+        const { ftp } = this.storageSettings.values;
         const { thumbnailFolder } = getFolderPaths(this.id, this.plugin.storageSettings.values.downloadFolder);
         const filename = `${videoclipId.split('/').pop().split('.')[0]}`;
 
-        return { videoclipUrl: playbackPathWithHost, filename, thumbnailFolder }
+        let videoclipUrl: string;
+        if (ftp) {
+            videoclipUrl = videoclipId;
+        } else {
+            const api = await this.getClient();
+            const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipId, this.id);
+            videoclipUrl = playbackPathWithHost;
+        }
+
+        return { videoclipUrl, filename, thumbnailFolder };
     }
 
     async getVideoClip(videoId: string): Promise<MediaObject> {
@@ -217,13 +370,17 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     async getVideoClipThumbnail(thumbnailId: string, options?: VideoClipThumbnailOptions): Promise<MediaObject> {
         this.console.log('Fetching thumbnailId ', thumbnailId);
         const { filename, videoclipUrl, thumbnailFolder } = await this.getVideoclipParams(thumbnailId);
+        // this.console.log('Thumbnail data: ', JSON.stringify({
+        //     filename,
+        //     videoclipUrl,
+        //     thumbnailFolder
+        // }));
 
         const { thumbnailMo } = await getThumbnailMediaObject({
             filename,
             thumbnailFolder,
             videoclipUrl,
             console: this.console,
-            shouldDownload: true
         })
 
         return thumbnailMo;
@@ -234,6 +391,10 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     }
 
     async getMixinSettings(): Promise<Setting[]> {
+        this.storageSettings.settings.filenamePrefix.hide = !this.storageSettings.values.ftp;
+        this.storageSettings.settings.ftpFolder.hide = !this.storageSettings.values.ftp;
+        this.storageSettings.settings.forceSnapshotMinutes.hide = !this.isBattery();
+
         const settings = await this.storageSettings.getSettings();
 
         return settings;
@@ -250,33 +411,17 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
         const client = await this.getClient();
         if (this.isBattery()) {
+            // Wake up the camera to trigger a new snapshot if last was long back
+            if (!this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * (this.storageSettings.values.forceSnapshotMinutes ?? 60))) {
+                this.console.log('Waking up the camera to force a snapshot')
+                await client.getWhiteLed();
+            }
+
             return this.lastSnapshot;
         } else {
             return this.createMediaObject(await client.jpegSnapshot(options?.timeout), 'image/jpeg');
         }
     }
-
-    // async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
-    //     const now = new Date().getTime();
-    //     const { snapshotInSeconds } = this.storageSettings.values;
-    //     const client = await this.getClient();
-    //     let shouldGenerateNewImage = false;
-
-    //     if (!snapshotInSeconds) {
-    //         shouldGenerateNewImage = true;
-    //     } else if (!this.lastSnapshot) {
-    //         shouldGenerateNewImage = true;
-    //     } else if (this.lastSnapshot && (now - this.lastSnapshotRequested) >= (1000 * snapshotInSeconds)) {
-    //         shouldGenerateNewImage = true;
-    //     }
-
-    //     if (shouldGenerateNewImage) {
-    //         this.lastSnapshotRequested = now;
-    //         this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(options?.timeout), 'image/jpeg');
-    //     }
-
-    //     return this.lastSnapshot;
-    // }
 
     async takePicture(options?: RequestPictureOptions) {
         return this.takeSmartCameraPicture(options);

@@ -32,57 +32,68 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
             const { deviceId, videoclipPath, parameters } = JSON.parse(params);
             const dev = this.mixinsMap[deviceId];
             const devConsole = dev.console;
-            devConsole.log(`Request with parameters: ${JSON.stringify({
-                webhook,
-                deviceId,
-                videoclipPath,
-                parameters
-            })}`);
+            // devConsole.log(`Request with parameters: ${JSON.stringify({
+            //     webhook,
+            //     deviceId,
+            //     videoclipPath,
+            //     parameters
+            // })}`);
 
             try {
                 if (webhook === 'videoclip') {
-                    const api = await dev.getClient();
 
-                    const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipPath, deviceId);
-                    devConsole.log(`Videoclip requested: ${JSON.stringify({
-                        videoclipPath,
-                        deviceId,
-                        playbackPathWithHost,
-                    })}`);
-
-                    const sendVideo = async () => {
-                        return new Promise<void>((resolve, reject) => {
-                            http.get(playbackPathWithHost, { headers: request.headers }, (httpResponse) => {
-                                if (httpResponse.statusCode[0] === 400) {
-                                    reject(new Error(`Error loading the video: ${httpResponse.statusCode} - ${httpResponse.statusMessage}. Headers: ${JSON.stringify(request.headers)}`));
-                                    return;
-                                }
-
-                                try {
-                                    response.sendStream((async function* () {
-                                        for await (const chunk of httpResponse) {
-                                            yield chunk;
-                                        }
-                                    })(), {
-                                        headers: httpResponse.headers
-                                    });
-
-                                    resolve();
-                                } catch (err) {
-                                    reject(err);
-                                }
-                            }).on('error', (e) => {
-                                devConsole.log('Error fetching videoclip', e);
-                                reject(e)
-                            });
-                        });
-                    }
-
-                    try {
-                        await sendVideo();
+                    if (dev.storageSettings.values.ftp) {
+                        // devConsole.log(`Videoclip requested via FTP: ${JSON.stringify({
+                        //     videoclipPath,
+                        //     deviceId,
+                        // })}`);
+                        
+                        response.sendFile(videoclipPath);
                         return;
-                    } catch (e) {
-                        devConsole.log('Error fetching videoclip', e);
+                    } else {
+                        const api = await dev.getClient();
+
+                        const { playbackPathWithHost } = await api.getVideoClipUrl(videoclipPath, deviceId);
+                        // devConsole.log(`Videoclip requested via API: ${JSON.stringify({
+                        //     videoclipPath,
+                        //     deviceId,
+                        //     playbackPathWithHost,
+                        // })}`);
+
+                        const sendVideo = async () => {
+                            return new Promise<void>((resolve, reject) => {
+                                http.get(playbackPathWithHost, { headers: request.headers }, (httpResponse) => {
+                                    if (httpResponse.statusCode[0] === 400) {
+                                        reject(new Error(`Error loading the video: ${httpResponse.statusCode} - ${httpResponse.statusMessage}. Headers: ${JSON.stringify(request.headers)}`));
+                                        return;
+                                    }
+
+                                    try {
+                                        response.sendStream((async function* () {
+                                            for await (const chunk of httpResponse) {
+                                                yield chunk;
+                                            }
+                                        })(), {
+                                            headers: httpResponse.headers
+                                        });
+
+                                        resolve();
+                                    } catch (err) {
+                                        reject(err);
+                                    }
+                                }).on('error', (e) => {
+                                    devConsole.log('Error fetching videoclip', e);
+                                    reject(e)
+                                });
+                            });
+                        }
+
+                        try {
+                            await sendVideo();
+                            return;
+                        } catch (e) {
+                            devConsole.log('Error fetching videoclip', e);
+                        }
                     }
                 } else
                     if (webhook === 'thumbnail') {
