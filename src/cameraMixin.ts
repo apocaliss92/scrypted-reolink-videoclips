@@ -122,27 +122,35 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                         const splitted = file.split(filenamePrefix);
                         timestamp = splitted[1];
                     }
-                    this.console.log(`Parsing filename: ${JSON.stringify({
-                        file,
-                        timestamp,
-                        videoclippathRegex
-                    })}`);
-                    const [__, ___, year, mon, day, hour, min, sec] = videoclippathRegex.exec(timestamp);
+                    // this.console.log(`Parsing filename: ${JSON.stringify({
+                    //     file,
+                    //     timestamp,
+                    //     videoclippathRegex
+                    // })}`);
 
-                    result.push({
-                        filename: file,
-                        fullPath,
-                        time: {
-                            day: Number(day),
-                            hour: Number(hour),
-                            min: Number(min),
-                            mon: Number(mon),
-                            sec: Number(sec),
-                            year: Number(year),
-                        },
-                        type: file.endsWith('mp4') ? 'video' : 'image',
-                        size: fileStat.size
-                    })
+                    try {
+                        const regexResult = videoclippathRegex.exec(timestamp);
+                        if (regexResult) {
+                            const [__, ___, year, mon, day, hour, min, sec] = regexResult;
+
+                            result.push({
+                                filename: file,
+                                fullPath,
+                                time: {
+                                    day: Number(day),
+                                    hour: Number(hour),
+                                    min: Number(min),
+                                    mon: Number(mon),
+                                    sec: Number(sec),
+                                    year: Number(year),
+                                },
+                                type: file.endsWith('mp4') ? 'video' : 'image',
+                                size: fileStat.size
+                            });
+                        }
+                    } catch (e) {
+                        this.console.log(`Error parsing file ${file} in path ${dir}`);
+                    }
                 }
             }
 
