@@ -122,6 +122,11 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                         const splitted = file.split(filenamePrefix);
                         timestamp = splitted[1];
                     }
+                    this.console.log(`Parsing filename: ${JSON.stringify({
+                        file,
+                        timestamp,
+                        videoclippathRegex
+                    })}`);
                     const [__, ___, year, mon, day, hour, min, sec] = videoclippathRegex.exec(timestamp);
 
                     result.push({
