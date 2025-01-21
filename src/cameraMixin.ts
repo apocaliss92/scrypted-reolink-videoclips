@@ -411,8 +411,9 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
         const client = await this.getClient();
         if (this.isBattery()) {
+            const { forceSnapshotMinutes } = this.storageSettings.values;
             // Wake up the camera to trigger a new snapshot if last was long back
-            if (!this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * (this.storageSettings.values.forceSnapshotMinutes ?? 60))) {
+            if (forceSnapshotMinutes && !this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * forceSnapshotMinutes)) {
                 this.console.log('Waking up the camera to force a snapshot')
                 await client.getWhiteLed();
             }
