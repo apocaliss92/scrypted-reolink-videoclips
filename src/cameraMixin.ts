@@ -18,7 +18,7 @@ interface VideoclipFileData {
     size: number;
 }
 
-const videoclippathRegex = new RegExp('(.{4})(.{2})(.{2})(.{2})(.{2})(.{2})');
+const videoclippathRegex = new RegExp('(.*)([0-9]{4})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})([0-9]{2})(.*)');
 
 export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any> implements Settings, Camera, VideoClips {
     client: ReolinkCameraClient;
@@ -63,7 +63,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         },
         filenamePrefix: {
             title: 'Filename prefix',
-            description: 'Prefix to filter out the camera videoclips stored on the FTP server',
+            description: 'This should contain any text of the clip names outside of the date numbers. I.e. Videocamera dispensa_00_20250105123640.mp4 -> Videocamera dispensa_00_',
             type: 'string',
             onPut: async () => this.checkFtpScan()
         },
@@ -105,10 +105,9 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
         const searchFile = (dir: string, currentResult: VideoclipFileData[] = []) => {
             const result: VideoclipFileData[] = [...currentResult];
-            const files = fs.readdirSync(dir);
+            const files = fs.readdirSync(dir) || [];
 
             // this.console.log('Files', files);
-            // search through the files
             for (const file of files) {
                 const fullPath = path.join(dir, file);
 
@@ -118,7 +117,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                     result.push(...searchFile(fullPath, result));
                 } else {
                     const [_, timestamp] = file.split(filenamePrefix);
-                    const [__, year, mon, day, hour, min, sec] = videoclippathRegex.exec(timestamp);
+                    const [__, ___, year, mon, day, hour, min, sec] = videoclippathRegex.exec(timestamp);
 
                     result.push({
                         filename: file,
@@ -145,7 +144,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                 this.ftpScanData = searchFile(ftpFolder);
             }
             catch (e) {
-                this.console.log('Error in getting battery info', e);
+                this.console.log('Error in scanning the ftp folder', e);
             }
         }, 1000 * 10);
     }
