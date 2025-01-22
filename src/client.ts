@@ -4,6 +4,7 @@ import { PassThrough, Readable } from 'stream';
 import { HttpFetchOptions } from '../../scrypted/server/src/fetch/http-fetch';
 import { getLoginParameters } from '../../scrypted/plugins/reolink/src/probe';
 import { findStartTimeFromFileName } from './utils';
+import { cloneDeep } from 'lodash';
 
 export interface VideoSearchTime {
     day: number;
@@ -135,6 +136,7 @@ export class ReolinkCameraClient {
         for (const [k, v] of Object.entries(this.parameters)) {
             params.set(k, v);
         }
+        this.console.log(`Calling ${url.pathname} with username ${params.get('username')} and token ${params.get('token')}`);
         return this.request(options, body);
     }
 

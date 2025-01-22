@@ -191,7 +191,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
             try {
                 const { sleep } = await client.getBatteryInfo();
-                if (sleep === false) {
+                if (sleep === false && this.canSnap()) {
                     this.console.log('Camera is not sleeping, snapping');
                     this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(), 'image/jpeg');
                     this.lastSnapshotTaken = Date.now();
@@ -233,10 +233,6 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         }
 
         return this.client;
-    }
-
-    async updateSnapshot() {
-        this.storage.setItem('snapshot:snapshotUrl', 'Test url');
     }
 
     async getVideoclipWebhookUrls(videoclipPath: string) {
@@ -425,12 +421,17 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         return this.interfaces.includes(ScryptedInterface.Battery);
     }
 
+    canSnap() {
+        const { forceSnapshotMinutes } = this.storageSettings.values;
+        return !this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * forceSnapshotMinutes)
+    }
+
     async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
         const client = await this.getClient();
         if (this.isBattery()) {
             const { forceSnapshotMinutes } = this.storageSettings.values;
             // Wake up the camera to trigger a new snapshot if last was long back
-            if (forceSnapshotMinutes && !this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * forceSnapshotMinutes)) {
+            if (forceSnapshotMinutes && this.canSnap()) {
                 this.console.log('Waking up the camera to force a snapshot')
                 await client.getWhiteLed();
             }
