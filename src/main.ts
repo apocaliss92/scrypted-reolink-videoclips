@@ -3,6 +3,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import { cleanup } from "./utils";
 import ReolinkVideoclipssMixin from "./cameraMixin";
 import http from 'http';
+import fs from 'fs';
 
 export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase implements MixinProvider, HttpRequestHandler {
     storageSettings = new StorageSettings(this, {
@@ -47,8 +48,60 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                         //     videoclipPath,
                         //     deviceId,
                         // })}`);
-                        
-                        response.sendFile(videoclipPath);
+
+                        const stat = fs.statSync(videoclipPath);
+                        const fileSize = stat.size;
+                        const range = request.headers.range;
+
+                        if (range) {
+                            const parts = range.replace(/bytes=/, "").split("-");
+                            const start = parseInt(parts[0], 10);
+                            const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+
+                            const chunksize = (end - start) + 1;
+                            const file = fs.createReadStream(videoclipPath, { start, end });
+
+
+                            const sendVideo = async () => {
+                                return new Promise<void>((resolve, reject) => {
+                                    try {
+                                        response.sendStream((async function* () {
+                                            for await (const chunk of file) {
+                                                yield chunk;
+                                            }
+                                        })(), {
+                                            code: 206,
+                                            headers: {
+                                                'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+                                                'Accept-Ranges': 'bytes',
+                                                'Content-Length': chunksize,
+                                                'Content-Type': 'video/mp4',
+                                            }
+                                        });
+
+                                        resolve();
+                                    } catch (err) {
+                                        reject(err);
+                                    }
+                                });
+                            };
+
+                            try {
+                                await sendVideo();
+                                return;
+                            } catch (e) {
+                                devConsole.log('Error fetching videoclip', e);
+                            }
+                        } else {
+                            response.sendFile(videoclipPath, {
+                                code: 200,
+                                headers: {
+                                    'Content-Length': fileSize,
+                                    'Content-Type': 'video/mp4',
+                                }
+                            });
+                        }
+
                         return;
                     } else {
                         const api = await dev.getClient();
@@ -86,7 +139,7 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                                     reject(e)
                                 });
                             });
-                        }
+                        };
 
                         try {
                             await sendVideo();

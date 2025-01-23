@@ -54,10 +54,11 @@ export class ReolinkCameraClient {
             username,
             password,
         };
-        if (loginData) {
-            this.parameters = loginData.parameters;
-            this.tokenLease = loginData.tokenLease;
-        }
+        this.parameters = {};
+        // if (loginData?.parameters.token) {
+        //     this.parameters.token = loginData.parameters;
+        //     this.tokenLease = loginData.tokenLease;
+        // }
 
         this.refreshTokenInterval = setInterval(async () => this.refreshSession(), 1000 * 60 * 5);
         this.refreshSession().catch(this.console.log);
@@ -136,7 +137,7 @@ export class ReolinkCameraClient {
         for (const [k, v] of Object.entries(this.parameters)) {
             params.set(k, v);
         }
-        this.console.log(`Calling ${url.pathname} with username ${params.get('username')} and token ${params.get('token')}`);
+        // this.console.log(`Calling ${url.pathname} with username ${params.get('username')} and token ${params.get('token')}`);
         return this.request(options, body);
     }
 

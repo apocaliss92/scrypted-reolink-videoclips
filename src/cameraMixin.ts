@@ -191,10 +191,10 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
             try {
                 const { sleep } = await client.getBatteryInfo();
-                if (sleep === false && this.canSnap()) {
+                if (sleep === false && this.canSnap(5)) {
+                    this.lastSnapshotTaken = Date.now();
                     this.console.log('Camera is not sleeping, snapping');
                     this.lastSnapshot = this.createMediaObject(await client.jpegSnapshot(), 'image/jpeg');
-                    this.lastSnapshotTaken = Date.now();
                 }
             }
             catch (e) {
@@ -421,9 +421,9 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         return this.interfaces.includes(ScryptedInterface.Battery);
     }
 
-    canSnap() {
+    canSnap(minutes?: number) {
         const { forceSnapshotMinutes } = this.storageSettings.values;
-        return !this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * forceSnapshotMinutes)
+        return !this.lastSnapshotTaken || (Date.now() - this.lastSnapshotTaken) >= (1000 * 60 * (minutes ?? forceSnapshotMinutes))
     }
 
     async takeSmartCameraPicture(options?: RequestPictureOptions): Promise<MediaObject> {
