@@ -76,7 +76,7 @@ export const getThumbnailMediaObject = async (props: {
 
         return { thumbnailMo };
     } catch (e) {
-        console.log(`Error retrieving thumbnail of videoclip ${filename} (${videoclipUrl})`, e);
+        console.error(`Error retrieving thumbnail of videoclip ${filename} (${videoclipUrl})`, e);
         fs.existsSync(outputThumbnailFile) && fs.rmSync(outputThumbnailFile);
 
         return {};
@@ -286,7 +286,7 @@ export const parseVideoclipName = (videoclipPath: string) => {
             detectionClasses,
         };
     } catch (e) {
-        console.log('Error parsing the filename', e);
+        console.error('Error parsing the filename', e);
     }
 }
 

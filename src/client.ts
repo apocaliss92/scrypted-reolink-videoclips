@@ -3,8 +3,6 @@ import { AuthFetchCredentialState, authHttpFetch } from '@scrypted/common/src/ht
 import { PassThrough, Readable } from 'stream';
 import { HttpFetchOptions } from '../../scrypted/server/src/fetch/http-fetch';
 import { getLoginParameters } from '../../scrypted/plugins/reolink/src/probe';
-import { findStartTimeFromFileName } from './utils';
-import { cloneDeep } from 'lodash';
 
 export interface VideoSearchTime {
     day: number;
