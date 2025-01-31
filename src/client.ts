@@ -44,8 +44,6 @@ export class ReolinkCameraClient {
         public password: string,
         public channelId: number,
         public console: Console,
-        public onTokenRefresh: (loginData: LoginData) => void,
-        loginData?: LoginData,
         public readonly forceToken?: boolean
     ) {
         this.credential = {
@@ -53,10 +51,6 @@ export class ReolinkCameraClient {
             password,
         };
         this.parameters = {};
-        // if (loginData?.parameters.token) {
-        //     this.parameters.token = loginData.parameters;
-        //     this.tokenLease = loginData.tokenLease;
-        // }
 
         this.refreshTokenInterval = setInterval(async () => this.refreshSession(), 1000 * 60 * 5);
         this.refreshSession().catch(this.console.log);
@@ -116,10 +110,6 @@ export class ReolinkCameraClient {
                 const { parameters, leaseTimeSeconds } = await getLoginParameters(this.host, this.username, this.password, this.forceToken);
                 this.parameters = parameters
                 this.tokenLease = Date.now() + 1000 * leaseTimeSeconds;
-                this.onTokenRefresh({
-                    parameters: this.parameters,
-                    tokenLease: this.tokenLease
-                });
                 this.loggingIn = false;
                 this.console.log(`New token: ${parameters.token}`);
             }
@@ -275,30 +265,5 @@ export class ReolinkCameraClient {
             batteryPercent: batteryInfoEntry?.batteryPercent,
             sleep: channelStatusEntry ? channelStatusEntry.sleep === 1 : undefined,
         }
-    }
-
-    async getWhiteLed() {
-        const url = new URL(`http://${this.host}/api.cgi`);
-
-        const body = [
-            {
-                cmd: "GetWhiteLed",
-                action: 0,
-                param: { channel: this.channelId }
-            }
-        ];
-
-        const response = await this.requestWithLogin({
-            url,
-            responseType: 'json',
-            method: 'POST',
-        }, this.createReadable(body));
-
-        const error = response.body?.find(elem => elem.error)?.error;
-        if (error) {
-            this.console.error('error during call to getWhiteLed', error);
-        }
-
-        return response.body[0];
     }
 }

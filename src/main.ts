@@ -207,7 +207,6 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
             [
                 ScryptedInterface.Settings,
                 ScryptedInterface.VideoClips,
-                ScryptedInterface.Camera,
             ] :
             undefined;
     }

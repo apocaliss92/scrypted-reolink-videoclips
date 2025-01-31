@@ -3,7 +3,7 @@
    "description": "Scrypted plugin to let reolink cameras to show stored videoclips",
    "repository": {
       "type": "git",
-      "url": "https://github.com/apocaliss92/scrypted-reolink-utilities"
+      "url": "https://github.com/apocaliss92/scrypted-reolink-videoclips"
    },
    "version": "0.1.10",
    "scripts": {
