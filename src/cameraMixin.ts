@@ -1,4 +1,4 @@
-import sdk, { VideoClips, VideoClipOptions, VideoClip, MediaObject, VideoClipThumbnailOptions, Setting, Settings } from "@scrypted/sdk";
+import sdk, { VideoClips, VideoClipOptions, VideoClip, MediaObject, VideoClipThumbnailOptions, Setting, Settings, RecordedEvent } from "@scrypted/sdk";
 import { SettingsMixinDeviceBase, SettingsMixinDeviceOptions } from "@scrypted/sdk/settings-mixin";
 import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
@@ -7,6 +7,7 @@ import ReolinkVideoclipssProvider from "./main";
 import { getThumbnailMediaObject, getFolderPaths, parseVideoclipName, splitDateRangeByDay } from "./utils";
 import fs from 'fs';
 import path from 'path';
+import { cleanupMemoryThresholderInGb, calculateSize } from '../../scrypted-events-recorder/src/util';
 
 const { endpointManager } = sdk;
 
@@ -25,6 +26,8 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     killed: boolean;
     ftpScanTimeout: NodeJS.Timeout;
     ftpScanData: VideoclipFileData[] = [];
+    logger: Console;
+    lastScanFs: number;
 
     storageSettings = new StorageSettings(this, {
         username: {
@@ -34,6 +37,12 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         password: {
             title: 'Password',
             type: 'password',
+        },
+        debug: {
+            title: 'Log debug messages',
+            type: 'boolean',
+            defaultValue: false,
+            immediate: true,
         },
         ftp: {
             title: 'Fetch from FTP folder',
@@ -53,13 +62,48 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
             type: 'string',
             onPut: async () => this.checkFtpScan()
         },
+        maxSpaceInGb: {
+            title: 'Dedicated memory in GB',
+            type: 'number',
+            defaultValue: 20,
+            onPut: async (_, newValue) => await this.scanFs(newValue)
+        },
+        occupiedSpaceInGb: {
+            title: 'Memory occupancy in GB',
+            type: 'number',
+            range: [0, 20],
+            readonly: true,
+            placeholder: 'GB'
+        },
     });
 
     constructor(options: SettingsMixinDeviceOptions<any>, private plugin: ReolinkVideoclipssProvider) {
         super(options);
 
+        const logger = this.getLogger();
+
         this.plugin.mixinsMap[this.id] = this;
-        this.checkFtpScan().catch(this.console.log);
+        this.checkFtpScan().catch(logger.log);
+    }
+
+    public getLogger() {
+        const deviceConsole = this.console;
+
+        if (!this.logger) {
+            const log = (debug: boolean, message?: any, ...optionalParams: any[]) => {
+                const now = new Date().toLocaleString();
+                if (!debug || this.storageSettings.getItem('debug')) {
+                    deviceConsole.log(` ${now} - `, message, ...optionalParams);
+                }
+            };
+            this.logger = {
+                log: (message?: any, ...optionalParams: any[]) => log(false, message, ...optionalParams),
+                error: (message?: any, ...optionalParams: any[]) => log(false, message, ...optionalParams),
+                debug: (message?: any, ...optionalParams: any[]) => log(true, message, ...optionalParams),
+            } as Console
+        }
+
+        return this.logger;
     }
 
     async release() {
@@ -69,7 +113,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     async checkFtpScan() {
         const { ftp, ftpFolder } = this.storageSettings.values;
         if (ftp && ftpFolder) {
-            this.startFtpScan();
+            await this.startFtpScan();
         } else {
             this.stopFtpScan();
         }
@@ -83,22 +127,28 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
         this.ftpScanTimeout = undefined;
     }
 
-    startFtpScan() {
+    async startFtpScan() {
+        const logger = this.getLogger();
         const { ftpFolder, filenamePrefix } = this.storageSettings.values;
         this.stopFtpScan();
 
-        const searchFile = (dir: string, currentResult: VideoclipFileData[] = []) => {
+        const searchFile = async (dir: string, currentResult: VideoclipFileData[] = []) => {
             const result: VideoclipFileData[] = [...currentResult];
-            const files = fs.readdirSync(dir) || [];
+            const files = await fs.promises.readdir(dir) || [];
 
-            // this.console.log('Files', files);
-            for (const file of files) {
+            const filteredFiles = files.filter(file =>
+                (filenamePrefix ? file.startsWith(filenamePrefix) : true) &&
+                file.endsWith('mp4')
+            );
+            logger.debug(`Files found: ${JSON.stringify({ files, filteredFiles })}`);
+
+            for (const file of filteredFiles) {
                 const fullPath = path.join(dir, file);
 
                 const fileStat = fs.statSync(fullPath);
 
                 if (fileStat.isDirectory()) {
-                    result.push(...searchFile(fullPath, result));
+                    result.push(...(await searchFile(fullPath, result)));
                 } else {
                     let timestamp = file;
 
@@ -106,11 +156,11 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                         const splitted = file.split(filenamePrefix);
                         timestamp = splitted[1];
                     }
-                    // this.console.log(`Parsing filename: ${JSON.stringify({
-                    //     file,
-                    //     timestamp,
-                    //     videoclippathRegex
-                    // })}`);
+                    logger.debug(`Parsing filename: ${JSON.stringify({
+                        file,
+                        timestamp,
+                        videoclippathRegex
+                    })}`);
 
                     try {
                         const regexResult = videoclippathRegex.exec(timestamp);
@@ -133,7 +183,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                             });
                         }
                     } catch (e) {
-                        this.console.log(`Error parsing file ${file} in path ${dir}`);
+                        logger.log(`Error parsing file ${file} in path ${dir}`);
                     }
                 }
             }
@@ -143,12 +193,89 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
         this.ftpScanTimeout = setInterval(async () => {
             try {
-                this.ftpScanData = searchFile(ftpFolder);
+                this.ftpScanData = await searchFile(ftpFolder);
             }
             catch (e) {
-                this.console.log('Error in scanning the ftp folder', e);
+                logger.log('Error in scanning the ftp folder', e);
             }
         }, 1000 * 10);
+    }
+
+    async scanFs(newMaxMemory?: number) {
+        const logger = this.getLogger();
+        logger.log(`Starting FS scan: ${JSON.stringify({ newMaxMemory })}`);
+
+        const { ftpFolder, filenamePrefix } = this.storageSettings.values;
+        const { maxSpaceInGb: maxSpaceInGbSrc } = this.storageSettings.values;
+        const maxSpaceInGb = newMaxMemory ?? maxSpaceInGbSrc;
+
+        const { occupiedSpaceInGb, occupiedSpaceInGbNumber, freeMemory } = await calculateSize({
+            currentPath: ftpFolder,
+            filenamePrefix,
+            maxSpaceInGb
+        });
+        this.storageSettings.settings.occupiedSpaceInGb.range = [0, maxSpaceInGb]
+        this.putMixinSetting('occupiedSpaceInGb', occupiedSpaceInGb);
+        logger.debug(`Occupied space: ${occupiedSpaceInGb} GB`);
+
+        // if (freeMemory <= cleanupMemoryThresholderInGb) {
+        //     const files = await fs.promises.readdir(ftpFolder);
+
+        //     const fileDetails = files
+        //         .map((file) => {
+        //             const match = filenamePrefix ? file.startsWith(filenamePrefix) : true;
+        //             if (match) {
+        //                 let timestamp = file;
+
+        //                 if (filenamePrefix) {
+        //                     const splitted = file.split(filenamePrefix);
+        //                     timestamp = splitted[1];
+        //                 }
+
+        //                 const regexResult = videoclippathRegex.exec(timestamp);
+        //                 if (regexResult) {
+        //                     const [__, ___, year, mon, day, hour, min, sec] = regexResult;
+        //                     const time: VideoSearchTime = {
+        //                         day: Number(day),
+        //                         hour: Number(hour),
+        //                         min: Number(min),
+        //                         mon: Number(mon),
+        //                         sec: Number(sec),
+        //                         year: Number(year),
+        //                     }
+        //                     const timestampParsed = this.processDate(time);
+
+        //                     const { videoClipPath } = this.getStorageDirs(file);
+        //                     return { file, fullPath: videoClipPath, timeStart: Number(timeStart) };
+        //                 }
+        //             }
+        //             return null;
+        //         })
+        //         .filter(Boolean);
+
+        //     fileDetails.sort((a, b) => a.timeStart - b.timeStart);
+
+        //     const filesToDelete = Math.min(fileDetails.length, clipsToCleanup);
+
+        //     logger.log(`Deleting ${filesToDelete} oldest files... ${JSON.stringify({ freeMemory, cleanupMemoryThresholderInGb })}`);
+
+        //     for (let i = 0; i < filesToDelete; i++) {
+        //         const { fullPath, file } = fileDetails[i];
+        //         await fs.promises.rm(fullPath, { force: true, recursive: true, maxRetries: 10 });
+        //         logger.log(`Deleted videoclip: ${file}`);
+        //         const { thumbnailPath } = this.getStorageDirs(file);
+        //         await fs.promises.rm(thumbnailPath, { force: true, recursive: true, maxRetries: 10 });
+        //         logger.log(`Deleted thumbnail: ${thumbnailPath}`);
+        //     }
+        // }
+
+        this.lastScanFs = Date.now();
+        logger.log(`FS scan executed: ${JSON.stringify({
+            freeMemory,
+            occupiedSpaceInGbNumber,
+            maxSpaceInGb,
+            cleanupMemoryThresholderInGb
+        })}`);
     }
 
     async getDeviceProperties() {
@@ -209,6 +336,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     }
 
     async getVideoClips(options?: VideoClipOptions, streamType: VideoSearchType = 'main') {
+        const logger = this.getLogger();
         try {
             const { ftp } = this.storageSettings.values;
 
@@ -245,7 +373,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                         });
                     }
                 }
-                this.console.log(`Videoclips found:`, videoclips);
+                logger.log(`Videoclips found:`, JSON.stringify({ videoclips }));
             } else {
                 const api = await this.getClient();
 
@@ -258,7 +386,11 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                     allSearchedElements.push(...response);
                 }
 
-                this.console.log(`Videoclips found:`, allSearchedElements, dateRanges, api.parameters.token);
+                logger.log(`Videoclips found:`, JSON.stringify({
+                    allSearchedElements,
+                    dateRanges,
+                    token: api.parameters.token
+                }));
 
                 for (const searchElement of allSearchedElements) {
                     try {
@@ -290,14 +422,14 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                             }
                         });
                     } catch (e) {
-                        this.console.log('error generating clip', e)
+                        logger.log('error generating clip', e)
                     }
                 }
             }
 
             return videoclips;
         } catch (e) {
-            this.console.log('Error during get videoClips', e);
+            logger.log('Error during get videoClips', e);
         }
     }
 
@@ -319,7 +451,8 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     }
 
     async getVideoClip(videoId: string): Promise<MediaObject> {
-        this.console.log('Fetching videoId ', videoId);
+        const logger = this.getLogger();
+        logger.log('Fetching videoId ', videoId);
         const { videoclipUrl } = await this.getVideoclipWebhookUrls(videoId);
         const videoclipMo = await sdk.mediaManager.createMediaObject(videoclipUrl, 'video/mp4');
 
@@ -327,13 +460,9 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
     }
 
     async getVideoClipThumbnail(thumbnailId: string, options?: VideoClipThumbnailOptions): Promise<MediaObject> {
-        this.console.log('Fetching thumbnailId ', thumbnailId);
+        const logger = this.getLogger();
+        logger.log('Fetching thumbnailId ', thumbnailId);
         const { filename, videoclipUrl, thumbnailFolder } = await this.getVideoclipParams(thumbnailId);
-        // this.console.log('Thumbnail data: ', JSON.stringify({
-        //     filename,
-        //     videoclipUrl,
-        //     thumbnailFolder
-        // }));
 
         const { thumbnailMo } = await getThumbnailMediaObject({
             filename,
