@@ -193,12 +193,22 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
 
         this.ftpScanTimeout = setInterval(async () => {
             try {
+                const now = Date.now();
+
                 this.ftpScanData = await searchFile(ftpFolder);
+
+                // Every 1 hour
+                if (!this.lastScanFs || (now - this.lastScanFs) > (1000 * 60 * 60)) {
+                    await this.scanFs();
+                }
             }
             catch (e) {
                 logger.log('Error in scanning the ftp folder', e);
             }
         }, 1000 * 10);
+
+        await this.scanFs();
+        this.ftpScanData = await searchFile(ftpFolder);
     }
 
     async scanFs(newMaxMemory?: number) {
