@@ -403,12 +403,12 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                 }));
 
                 for (const searchElement of allSearchedElements) {
+                    const videoclipPath = searchElement.name;
                     try {
                         const startTime = this.processDate(searchElement.StartTime);
                         const entdTime = this.processDate(searchElement.EndTime);
 
                         const durationInMs = entdTime - startTime;
-                        const videoclipPath = searchElement.name;
                         const { detectionClasses } = parseVideoclipName(videoclipPath)
 
                         const event = 'motion';
@@ -432,7 +432,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                             }
                         });
                     } catch (e) {
-                        logger.log('error generating clip', e)
+                        logger.log(`error parsing videoclip ${videoclipPath}: ${JSON.stringify(searchElement)}`, e);
                     }
                 }
             }
