@@ -1,9 +1,11 @@
 import path from 'path';
 import fs from 'fs';
 import url from 'url';
+import { name } from '../package.json';
 import sdk, { MediaObject } from '@scrypted/sdk';
 
 const { mediaManager } = sdk;
+export const pluginId = name;
 
 export const getFolderPaths = (deviceId: string, overridePath?: string) => {
     let basePath = overridePath;

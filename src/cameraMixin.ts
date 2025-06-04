@@ -4,7 +4,7 @@ import { StorageSettings } from "@scrypted/sdk/storage-settings";
 import keyBy from "lodash/keyBy";
 import { ReolinkCameraClient, VideoSearchType, VideoSearchTime, VideoSearchResult } from "./client";
 import ReolinkVideoclipssProvider from "./main";
-import { getThumbnailMediaObject, getFolderPaths, parseVideoclipName, splitDateRangeByDay } from "./utils";
+import { getThumbnailMediaObject, getFolderPaths, parseVideoclipName, splitDateRangeByDay, pluginId } from "./utils";
 import fs from 'fs';
 import path from 'path';
 import { cleanupMemoryThresholderInGb, calculateSize } from '../../scrypted-events-recorder/src/util';
@@ -421,7 +421,7 @@ export default class ReolinkVideoclipssMixin extends SettingsMixinDeviceBase<any
                             thumbnailId: videoclipPath,
                             detectionClasses,
                             event,
-                            description: event,
+                            description: pluginId,
                             resources: {
                                 thumbnail: {
                                     href: thumbnailUrl

@@ -61,7 +61,6 @@ export default class ReolinkVideoclipssProvider extends ScryptedDeviceBase imple
                             const chunksize = (end - start) + 1;
                             const file = fs.createReadStream(videoclipPath, { start, end });
 
-
                             const sendVideo = async () => {
                                 return new Promise<void>((resolve, reject) => {
                                     try {
